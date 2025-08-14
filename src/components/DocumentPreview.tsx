@@ -47,7 +47,7 @@ const renderFormattedContent = (formattedContent: FormattedContent[] | undefined
         if (item.style?.bold) className.push('font-bold');
         if (item.style?.italic) className.push('italic');
         if (item.style?.underline) className.push('underline');
-        if (item.style?.color) style.color = item.style.color;
+        // Note: color property is not available in the current TextFormatting interface
         return (
           <span key={idx} className={className.join(' ')} style={style}>{item.text}</span>
         );
@@ -226,9 +226,9 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                 </h3>
                 <p className="text-sm text-gray-600">Live preview of your document</p>
               </div>
-              <button className="p-3 text-gray-400 hover:text-gray-600 transition-colors bg-white/80 backdrop-blur-sm rounded-xl hover:bg-white">
+              {/* <button className="p-3 text-gray-400 hover:text-gray-600 transition-colors bg-white/80 backdrop-blur-sm rounded-xl hover:bg-white">
                 <Settings className="w-5 h-5" />
-              </button>
+              </button> */}
             </div>
             
             <div className="p-8 bg-gradient-to-br from-gray-50 to-slate-50 max-h-[800px] overflow-y-auto">
@@ -239,6 +239,20 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                    {projectInfo.headerText && (
                      <div className="mb-3 text-sm text-gray-500">{projectInfo.headerText}</div>
                    )}
+                   
+                   {/* Customer Logo */}
+                   {projectInfo.customerLogo && (
+                     <div className="flex justify-center mb-6">
+                       <div className="w-32 h-32 border-2 border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                         <img
+                           src={URL.createObjectURL(projectInfo.customerLogo)}
+                           alt="Customer Logo"
+                           className="w-full h-full object-contain p-2"
+                         />
+                       </div>
+                     </div>
+                   )}
+                   
                    <h1 className="text-4xl font-bold text-gray-900 mb-4 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">
                      {documentType.toUpperCase().replace('-', ' ')}
                    </h1>
@@ -310,7 +324,6 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                           {(() => { 
                             const titleStyle: React.CSSProperties = {
                               fontFamily: block.titleFormatting?.fontFamily,
-                              color: block.titleFormatting?.color || undefined,
                               fontWeight: block.titleFormatting?.bold ? '700' as const : undefined,
                               fontStyle: block.titleFormatting?.italic ? 'italic' : undefined,
                               textDecoration: block.titleFormatting?.underline ? 'underline' : undefined,
@@ -342,7 +355,6 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                             }
                             const contentStyle: React.CSSProperties = {
                               fontFamily: block.contentFormatting?.fontFamily,
-                              color: block.contentFormatting?.color || undefined,
                               fontWeight: block.contentFormatting?.bold ? '700' as const : undefined,
                               fontStyle: block.contentFormatting?.italic ? 'italic' : undefined,
                               textDecoration: block.contentFormatting?.underline ? 'underline' : undefined,
@@ -372,7 +384,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                 ))}
 
                 {/* Pricing and Components */}
-                {(projectInfo.hardwareComponents || projectInfo.servicesComponents || projectInfo.pricingTable) && (
+                {(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) && (
                   <div className="mb-10">
                     <div className="flex items-center mb-6">
                       <div className="w-8 h-8 bg-gradient-to-r from-amber-500 to-amber-600 rounded-full flex items-center justify-center mr-3">
@@ -382,17 +394,31 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                     </div>
                     
                     <div className="space-y-6 pl-11">
-                      {projectInfo.hardwareComponents && (
+                      {projectInfo.hardwareComponents.length > 0 && (
                         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border-l-4 border-blue-500">
                           <h4 className="text-lg font-semibold text-blue-800 mb-3">Hardware Components</h4>
-                          <p className="text-gray-700 leading-relaxed">{projectInfo.hardwareComponents}</p>
+                          <div className="text-gray-700 leading-relaxed space-y-2">
+                            {projectInfo.hardwareComponents.map((item, index) => (
+                              <div key={index} className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <div>{renderFormattedContent([item])}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
-                      {projectInfo.servicesComponents && (
+                      {projectInfo.servicesComponents.length > 0 && (
                         <div className="bg-gradient-to-r from-emerald-50 to-teal-50 p-6 rounded-xl border-l-4 border-emerald-500">
                           <h4 className="text-lg font-semibold text-emerald-800 mb-3">Services Components</h4>
-                          <p className="text-gray-700 leading-relaxed">{projectInfo.servicesComponents}</p>
+                          <div className="text-gray-700 leading-relaxed space-y-2">
+                            {projectInfo.servicesComponents.map((item, index) => (
+                              <div key={index} className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <div>{renderFormattedContent([item])}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 

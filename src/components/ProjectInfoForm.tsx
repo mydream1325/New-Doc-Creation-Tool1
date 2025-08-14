@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Calendar, User, Briefcase, Building, MapPin, Phone, Mail, Plus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
-import { ProjectInfo, PricingItem } from '../types';
+import { ProjectInfo, PricingItem, FormattedContent } from '../types';
+import { PricingComponents } from './PricingComponents';
 
 // Utility function to format date consistently in MM/DD/YYYY format
 const formatDate = (dateString: string): string => {
@@ -226,7 +227,7 @@ export const ProjectInfoForm: React.FC<ProjectInfoFormProps> = ({
     }
   }, [projectInfo.startDate]);
 
-  const handleInputChange = (field: keyof ProjectInfo, value: string) => {
+  const handleInputChange = (field: keyof ProjectInfo, value: string | FormattedContent[]) => {
     onInfoChange({
       ...projectInfo,
       [field]: value
@@ -405,23 +406,41 @@ export const ProjectInfoForm: React.FC<ProjectInfoFormProps> = ({
                   Customer Logo
                 </label>
                 <div className="relative">
-                  <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-xl cursor-pointer bg-gradient-to-br from-gray-50 to-gray-100 hover:from-primary-50 hover:to-primary-100 hover:border-primary-300 transition-all duration-300 group">
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                      <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
-                        <Upload className="w-6 h-6 text-white" />
+                  {projectInfo.customerLogo ? (
+                    <div className="relative">
+                      <div className="w-full h-40 border-2 border-gray-300 rounded-xl overflow-hidden bg-white">
+                        <img
+                          src={URL.createObjectURL(projectInfo.customerLogo)}
+                          alt="Customer Logo"
+                          className="w-full h-full object-contain p-2"
+                        />
                       </div>
-                      <p className="text-sm text-gray-600 font-medium">
-                        {projectInfo.customerLogo ? projectInfo.customerLogo.name : 'Click to upload logo'}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">PNG, JPG up to 10MB</p>
+                      <button
+                        type="button"
+                        onClick={() => onInfoChange({ ...projectInfo, customerLogo: undefined })}
+                        className="absolute top-2 right-2 w-8 h-8 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors duration-200"
+                        title="Remove logo"
+                      >
+                        <span className="text-sm font-bold">×</span>
+                      </button>
                     </div>
-                    <input
-                      type="file"
-                      className="hidden"
-                      accept="image/*"
-                      onChange={handleFileChange}
-                    />
-                  </label>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-gray-300 border-dashed rounded-xl cursor-pointer bg-gradient-to-br from-gray-50 to-gray-100 hover:from-primary-50 hover:to-primary-100 hover:border-primary-300 transition-all duration-300 group">
+                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                          <Upload className="w-6 h-6 text-white" />
+                        </div>
+                        <p className="text-sm text-gray-600 font-medium">Click to upload logo</p>
+                        <p className="text-xs text-gray-400 mt-1">PNG, JPG up to 10MB</p>
+                      </div>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                      />
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
@@ -579,33 +598,12 @@ export const ProjectInfoForm: React.FC<ProjectInfoFormProps> = ({
         </div>
         
         <div className="p-6 space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Hardware Components
-              </label>
-              <textarea
-                value={projectInfo.hardwareComponents}
-                onChange={(e) => handleInputChange('hardwareComponents', e.target.value)}
-                rows={4}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all duration-300 bg-gray-50 focus:bg-white resize-none"
-                placeholder="List hardware requirements, specifications, and quantities..."
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Services Components
-              </label>
-              <textarea
-                value={projectInfo.servicesComponents}
-                onChange={(e) => handleInputChange('servicesComponents', e.target.value)}
-                rows={4}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all duration-300 bg-gray-50 focus:bg-white resize-none"
-                placeholder="List service offerings, consulting hours, and support packages..."
-              />
-            </div>
-          </div>
+          <PricingComponents
+            hardwareComponents={projectInfo.hardwareComponents}
+            servicesComponents={projectInfo.servicesComponents}
+            onHardwareComponentsChange={(components) => handleInputChange('hardwareComponents', components)}
+            onServicesComponentsChange={(components) => handleInputChange('servicesComponents', components)}
+          />
 
           <div>
             <div className="flex justify-between items-center mb-4">

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, Header, Footer } from 'docx';
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, Header, Footer, ImageRun } from 'docx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 import { WizardProgress } from './components/WizardProgress';
 import { DocumentTypeSelector } from './components/DocumentTypeSelector';
@@ -42,7 +44,7 @@ const convertFormattedContentToTextRuns = (formattedContent: FormattedContent[] 
     if (item.style?.bold) textRunOptions.bold = true;
     if (item.style?.italic) textRunOptions.italics = true;
     if (item.style?.underline) textRunOptions.underline = {};
-    if (item.style?.color) textRunOptions.color = item.style.color;
+    // if (item.style?.color) textRunOptions.color = item.style.color;
     if (item.style?.fontFamily) textRunOptions.font = item.style.fontFamily;
     if (item.style?.fontSize) {
       // Convert fontSize to docx size (in half-points)
@@ -75,9 +77,9 @@ const convertFormattedContentToHTML = (formattedContent: FormattedContent[] | un
     if (item.style?.italic) html = `<em>${html}</em>`;
     if (item.style?.underline) html = `<u>${html}</u>`;
     
-    if (item.style?.color || item.style?.fontSize || item.style?.fontFamily) {
+    if (item.style?.fontSize || item.style?.fontFamily) {
       const style = [] as string[];
-      if (item.style?.color) style.push(`color: ${item.style.color}`);
+      // Note: color property is not available in the current interface
       if (item.style?.fontFamily) style.push(`font-family: ${item.style.fontFamily}`);
       if (item.style?.fontSize) {
         const sizeMap: { [key: string]: string } = {
@@ -98,12 +100,30 @@ const convertFormattedContentToHTML = (formattedContent: FormattedContent[] | un
   }).join('');
 };
 
+// Helper function to convert formatted content to plain text with formatting indicators
+const convertFormattedContentToPlainText = (formattedContent: FormattedContent[] | undefined): string => {
+  if (!formattedContent || formattedContent.length === 0) {
+    return '';
+  }
+
+  return formattedContent.map((item) => {
+    let text = item.text;
+    
+    // Add formatting indicators for plain text
+    if (item.style?.bold) text = `**${text}**`;
+    if (item.style?.italic) text = `*${text}*`;
+    if (item.style?.underline) text = `_${text}_`;
+    
+    return text;
+  }).join('');
+};
+
 // Build inline style string from TextFormatting
 const buildInlineStyleFromFormatting = (fmt?: TextFormatting): string => {
   if (!fmt) return '';
   const style: string[] = [];
   if (fmt.fontFamily) style.push(`font-family: ${fmt.fontFamily}`);
-  if (fmt.color) style.push(`color: ${fmt.color}`);
+  // if (fmt.color) style.push(`color: ${fmt.color}`);
   if (fmt.bold) style.push('font-weight: 700');
   if (fmt.italic) style.push('font-style: italic');
   if (fmt.underline) style.push('text-decoration: underline');
@@ -132,8 +152,8 @@ function App() {
     projectOverview: '',
     technicalOverview: '',
     pricingTable: [],
-    hardwareComponents: '',
-    servicesComponents: '',
+    hardwareComponents: [],
+    servicesComponents: [],
     headerText: '',
     footerText: ''
   });
@@ -212,19 +232,31 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
     Object.entries(groupedBlocks).forEach(([category, blocks]) => {
       content += `\n### ${category}\n\n`;
       blocks.forEach((block, index) => {
-        content += `#### ${block.title}\n\n${block.content}\n\n`;
+        // Use formatted content if available, otherwise use plain content
+        const blockContent = block.formattedContent && block.formattedContent.length > 0
+          ? convertFormattedContentToPlainText(block.formattedContent)
+          : block.content;
+        content += `#### ${block.title}\n\n${blockContent}\n\n`;
       });
     });
 
-    if (projectInfo.hardwareComponents || projectInfo.servicesComponents || projectInfo.pricingTable.length > 0) {
+    if (projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) {
       content += `\n## Pricing & Components\n\n`;
       
-      if (projectInfo.hardwareComponents) {
-        content += `### Hardware Components\n\n${projectInfo.hardwareComponents}\n\n`;
+      if (projectInfo.hardwareComponents.length > 0) {
+        content += `### Hardware Components\n\n`;
+        projectInfo.hardwareComponents.forEach(item => {
+          content += `${convertFormattedContentToPlainText([item])}\n`;
+        });
+        content += `\n`;
       }
       
-      if (projectInfo.servicesComponents) {
-        content += `### Services Components\n\n${projectInfo.servicesComponents}\n\n`;
+      if (projectInfo.servicesComponents.length > 0) {
+        content += `### Services Components\n\n`;
+        projectInfo.servicesComponents.forEach(item => {
+          content += `${convertFormattedContentToPlainText([item])}\n`;
+        });
+        content += `\n`;
       }
       
       if (projectInfo.pricingTable.length > 0) {
@@ -271,127 +303,175 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
 
       switch (format) {
         case 'pdf':
-          // Build HTML that reflects block-level formatting
-          const htmlContent = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${selectedDocumentType}</title>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
-    h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
-    h2 { color: #1e40af; margin-top: 30px; }
-    h3 { color: #1e3a8a; }
-    h4 { color: #1e293b; }
-    .header { text-align: center; margin-bottom: 40px; }
-    .section { margin-bottom: 30px; }
-    .block { background: #f8fafc; padding: 15px; margin: 10px 0; border-left: 4px solid #2563eb; }
-    .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #64748b; }
-    @media print { body { margin: 20px; } }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
-    ${projectInfo.customerName ? `<h2>${projectInfo.customerName}</h2>` : ''}
-    ${projectInfo.projectName ? `<h3>${projectInfo.projectName}</h3>` : ''}
-    ${projectInfo.startDate ? `<p><strong>Start Date:</strong> ${formatDate(projectInfo.startDate)}</p>` : ''}
-  </div>
+          try {
+            console.log('Starting PDF generation...');
+            
+            // Create a temporary div to render the document content
+            const tempDiv = document.createElement('div');
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.left = '-9999px';
+            tempDiv.style.top = '-9999px';
+            tempDiv.style.width = '800px';
+            tempDiv.style.padding = '40px';
+            tempDiv.style.backgroundColor = 'white';
+            tempDiv.style.fontFamily = 'Arial, sans-serif';
+            tempDiv.style.lineHeight = '1.6';
+            tempDiv.style.color = 'black';
+            
+            // Build the HTML content for PDF - matching Word document format
+            const htmlContent = `
+              <div style="margin-bottom: 20px; text-align: center;">
+                ${projectInfo.customerLogo ? `
+                  <div style="margin-bottom: 15px;">
+                    <img src="${URL.createObjectURL(projectInfo.customerLogo)}" alt="Customer Logo" style="max-width: 120px; max-height: 120px; object-fit: contain;" />
+                  </div>
+                ` : ''}
+                <h1 style="color: #2563eb; margin: 0 0 15px 0; font-size: 24px; font-weight: bold;">${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
+                <p style="margin: 5px 0;">Customer: ${projectInfo.customerName || 'N/A'}</p>
+                <p style="margin: 5px 0;">Project: ${projectInfo.projectName || 'N/A'}</p>
+                ${projectInfo.startDate ? `<p style="margin: 5px 0;">Start Date: ${formatDate(projectInfo.startDate)}</p>` : ''}
+              </div>
 
-  <div class="section">
-    <h2>Project Overview</h2>
-    <div class="block">${projectInfo.projectOverview || 'No project overview provided.'}</div>
-  </div>
+              <div style="margin-bottom: 20px;">
+                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Project Overview</h2>
+                <p style="margin: 5px 0;">${projectInfo.projectOverview || 'No project overview provided.'}</p>
+              </div>
 
-  <div class="section">
-    <h2>Technical Overview</h2>
-    <div class="block">${projectInfo.technicalOverview || 'No technical overview provided.'}</div>
-  </div>
+              <div style="margin-bottom: 20px;">
+                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Technical Overview</h2>
+                <p style="margin: 5px 0;">${projectInfo.technicalOverview || 'No technical overview provided.'}</p>
+              </div>
 
-  ${Object.entries(selectedBlocks.reduce((acc, block) => {
-    if (!acc[block.category]) acc[block.category] = [];
-    acc[block.category].push(block);
-    return acc;
-  }, {} as Record<string, TextBlock[]>)).map(([category, blocks]) => `
-  <div class="section">
-    <h2>${category}</h2>
-    ${blocks.map(block => {
-      const titleStyle = buildInlineStyleFromFormatting(block.titleFormatting);
-      const contentStyle = buildInlineStyleFromFormatting(block.contentFormatting);
-      const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</div>` : '';
-      const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<div style="font-size: 0.75rem; color: #6b7280; margin-top: 0.5rem;">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</div>` : '';
-      const contentHTML = (block.formattedContent && block.formattedContent.length > 0)
-        ? convertFormattedContentToHTML(block.formattedContent)
-        : block.content.replace(/\n/g, '<br>');
-      return `
-      <div class="block">
-        <h4 style="${titleStyle}">${block.title}</h4>
-        ${headerHTML}
-        <div style="${contentStyle}">${contentHTML}</div>
-        ${footerHTML}
-      </div>`;
-    }).join('')}
-  </div>
-  `).join('')}
+              ${selectedBlocks.map((block, index) => {
+                const titleStyle = buildInlineStyleFromFormatting(block.titleFormatting);
+                const contentStyle = buildInlineStyleFromFormatting(block.contentFormatting);
+                const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<p style="margin: 5px 0; font-style: italic; color: #6b7280; font-size: 12px;">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</p>` : '';
+                const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<p style="margin: 5px 0; font-style: italic; color: #6b7280; font-size: 12px;">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</p>` : '';
+                const contentHTML = (block.formattedContent && block.formattedContent.length > 0)
+                  ? convertFormattedContentToHTML(block.formattedContent)
+                  : block.content.replace(/\n/g, '<br>');
+                return `
+                <div style="margin-bottom: 15px;">
+                  <p style="margin: 5px 0;"><span style="${titleStyle}">${index + 1}. ${block.title}</span></p>
+                  ${headerHTML}
+                  <p style="margin: 5px 0; ${contentStyle}">${contentHTML}</p>
+                  ${footerHTML}
+                </div>`;
+              }).join('')}
 
-  ${(projectInfo.hardwareComponents || projectInfo.servicesComponents || projectInfo.pricingTable.length > 0) ? `
-  <div class="section">
-    <h2>Pricing & Components</h2>
-    ${projectInfo.hardwareComponents ? `
-    <div class="block">
-      <h4>Hardware Components</h4>
-      <p>${projectInfo.hardwareComponents}</p>
-    </div>
-    ` : ''}
-    ${projectInfo.servicesComponents ? `
-    <div class="block">
-      <h4>Services Components</h4>
-      <p>${projectInfo.servicesComponents}</p>
-    </div>
-    ` : ''}
-    ${projectInfo.pricingTable.length > 0 ? `
-    <div class="block">
-      <h4>Pricing Structure</h4>
-      <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-        <thead>
-          <tr style="background-color: #f8fafc;">
-            <th style="border: 1px solid #e2e8f0; padding: 8px; text-align: left;">Item</th>
-            <th style="border: 1px solid #e2e8f0; padding: 8px; text-align: left;">Quantity</th>
-            <th style="border: 1px solid #e2e8f0; padding: 8px; text-align: left;">Description</th>
-            <th style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">Price ($)</th>
-            <th style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">Extended Price ($)</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${projectInfo.pricingTable.map(item => `
-            <tr>
-              <td style="border: 1px solid #e2e8f0; padding: 8px;">${item.item || 'N/A'}</td>
-              <td style="border: 1px solid #e2e8f0; padding: 8px;">${item.quantity}</td>
-              <td style="border: 1px solid #e2e8f0; padding: 8px;">${item.description || 'N/A'}</td>
-              <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">$${item.price.toFixed(2)}</td>
-              <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">$${item.extendedPrice.toFixed(2)}</td>
-            </tr>
-          `).join('')}
-          <tr style="background-color: #f8fafc; font-weight: bold;">
-            <td colspan="4" style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">Total:</td>
-            <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    ` : ''}
-  </div>
-  ` : ''}
+              ${(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) ? `
+              <div style="margin-bottom: 20px;">
+                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Pricing & Components</h2>
+                ${projectInfo.hardwareComponents.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Hardware Components</h3>
+                  <div style="margin: 5px 0;">
+                    ${projectInfo.hardwareComponents.map(item => `
+                      <div style="margin: 2px 0;">
+                        • ${convertFormattedContentToHTML([item])}
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                ` : ''}
+                ${projectInfo.servicesComponents.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Services Components</h3>
+                  <div style="margin: 5px 0;">
+                    ${projectInfo.servicesComponents.map(item => `
+                      <div style="margin: 2px 0;">
+                        • ${convertFormattedContentToHTML([item])}
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                ` : ''}
+                ${projectInfo.pricingTable.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Pricing Structure</h3>
+                  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
+                    <thead>
+                      <tr style="background-color: #f8fafc;">
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Item</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Qty</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Description</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Price ($)</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Extended ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${projectInfo.pricingTable.map(item => `
+                        <tr>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.item || 'N/A'}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.quantity}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.description || 'N/A'}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${item.price.toFixed(2)}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${item.extendedPrice.toFixed(2)}</td>
+                        </tr>
+                      `).join('')}
+                      <tr style="background-color: #f8fafc; font-weight: bold;">
+                        <td colspan="4" style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Total:</td>
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                ` : ''}
+              </div>
+              ` : ''}
 
-  <div class="footer">
-    <p><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
-  </div>
-</body>
-</html>`;
-
-          downloadFile(htmlContent, `${baseFilename}.html`, 'text/html');
-          alert('HTML file generated! Open it in a browser and use "Print to PDF" to save as PDF.');
+              <div style="text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 12px;">
+                <p style="margin: 0;"><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
+              </div>
+            `;
+            
+            tempDiv.innerHTML = htmlContent;
+            document.body.appendChild(tempDiv);
+            
+            // Convert HTML to canvas, then to PDF
+            const canvas = await html2canvas(tempDiv, {
+              scale: 2,
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: '#ffffff',
+              width: 800,
+              height: tempDiv.scrollHeight
+            });
+            
+            // Remove the temporary div
+            document.body.removeChild(tempDiv);
+            
+            // Create PDF
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = pdf.internal.pageSize.getHeight();
+            const imgWidth = pdfWidth - 20; // 10mm margin on each side
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            
+            let heightLeft = imgHeight;
+            let position = 10; // 10mm top margin
+            
+            // Add first page
+            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+            heightLeft -= (pdfHeight - 20); // Account for margins
+            
+            // Add additional pages if needed
+            while (heightLeft >= 0) {
+              position = heightLeft - imgHeight + 10;
+              pdf.addPage();
+              pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+              heightLeft -= (pdfHeight - 20);
+            }
+            
+            // Save the PDF
+            pdf.save(`${baseFilename}.pdf`);
+            console.log('PDF generated successfully');
+            
+          } catch (error) {
+            console.error('Error generating PDF:', error);
+            alert('Error generating PDF. Please try again.');
+          }
           break;
 
         case 'docx':
@@ -405,6 +485,84 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             paragraphs.push(new Paragraph({
               children: [new TextRun({ text: selectedDocumentType.toUpperCase().replace('-', ' '), bold: true })]
             }));
+            
+            // Customer Logo (if available)
+            if (projectInfo.customerLogo) {
+              console.log('Customer logo found:', projectInfo.customerLogo.name, projectInfo.customerLogo.type, projectInfo.customerLogo.size);
+              
+              // Check if the image format is supported
+              const supportedFormats = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'];
+              if (!supportedFormats.includes(projectInfo.customerLogo.type)) {
+                console.warn('Unsupported image format:', projectInfo.customerLogo.type);
+              }
+              
+              try {
+                // Convert the logo file to Uint8Array for embedding
+                const arrayBuffer = await projectInfo.customerLogo.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                console.log('Logo converted to Uint8Array, size:', uint8Array.length);
+                
+                // Create image element to get dimensions
+                const img = new Image();
+                const imgPromise = new Promise<void>((resolve, reject) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => reject(new Error('Failed to load image'));
+                });
+                
+                img.src = URL.createObjectURL(projectInfo.customerLogo);
+                await imgPromise;
+                
+                // Calculate aspect ratio to maintain proportions
+                const aspectRatio = img.width / img.height;
+                const maxWidth = 200;
+                const maxHeight = 200;
+                let width = maxWidth;
+                let height = maxHeight;
+                
+                if (aspectRatio > 1) {
+                  // Landscape image
+                  height = maxWidth / aspectRatio;
+                } else {
+                  // Portrait image
+                  width = maxHeight * aspectRatio;
+                }
+                
+                // Add the image to the document
+                const imageParagraph = new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: uint8Array,
+                      transformation: {
+                        width: Math.round(width),
+                        height: Math.round(height),
+                      }
+                    }),
+                  ],
+                  alignment: AlignmentType.CENTER,
+                });
+                paragraphs.push(imageParagraph);
+                console.log('Logo paragraph added to document with dimensions:', width, 'x', height);
+                
+                // Clean up the object URL
+                URL.revokeObjectURL(img.src);
+              } catch (error) {
+                console.error('Could not embed customer logo in DOCX:', error);
+                console.error('Error details:', error);
+                
+                // Add a text-based fallback indicating the logo was included
+                paragraphs.push(new Paragraph({
+                  children: [new TextRun({ 
+                    text: `[Customer Logo: ${projectInfo.customerLogo.name}]`, 
+                    bold: true,
+                    color: '666666'
+                  })],
+                  alignment: AlignmentType.CENTER,
+                }));
+                console.log('Added text fallback for logo');
+              }
+            } else {
+              console.log('No customer logo found');
+            }
             
             // Customer and Project info
             paragraphs.push(new Paragraph({
@@ -439,7 +597,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
               if (block.titleFormatting?.bold) titleOptions.bold = true;
               if (block.titleFormatting?.italic) titleOptions.italics = true;
               if (block.titleFormatting?.underline) titleOptions.underline = {};
-              if (block.titleFormatting?.color) titleOptions.color = block.titleFormatting.color;
+              // if (block.titleFormatting?.color) titleOptions.color = block.titleFormatting.color;  
               if (block.titleFormatting?.fontFamily) titleOptions.font = block.titleFormatting.fontFamily;
               if (block.titleFormatting?.fontSize) {
                 const sizeMap: { [key: string]: number } = { xs: 16, sm: 20, base: 24, lg: 28, xl: 32, '2xl': 36, '3xl': 40 };
@@ -465,7 +623,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
                 if (block.contentFormatting?.bold) contentOptions.bold = true;
                 if (block.contentFormatting?.italic) contentOptions.italics = true;
                 if (block.contentFormatting?.underline) contentOptions.underline = {};
-                if (block.contentFormatting?.color) contentOptions.color = block.contentFormatting.color;
+                // if (block.contentFormatting?.color) contentOptions.color = block.contentFormatting.color;
                 if (block.contentFormatting?.fontFamily) contentOptions.font = block.contentFormatting.fontFamily;
                 if (block.contentFormatting?.fontSize) {
                   const sizeMap: { [key: string]: number } = { xs: 16, sm: 20, base: 24, lg: 28, xl: 32, '2xl': 36, '3xl': 40 };
@@ -483,22 +641,28 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             });
             
             // Pricing Components
-            if (projectInfo.hardwareComponents) {
+            if (projectInfo.hardwareComponents.length > 0) {
               paragraphs.push(new Paragraph({
                 children: [new TextRun({ text: "Hardware Components", bold: true })]
               }));
-              paragraphs.push(new Paragraph({
-                children: [new TextRun({ text: projectInfo.hardwareComponents })]
-              }));
+              projectInfo.hardwareComponents.forEach(item => {
+                const textRuns = convertFormattedContentToTextRuns([item]);
+                paragraphs.push(new Paragraph({
+                  children: textRuns
+                }));
+              });
             }
             
-            if (projectInfo.servicesComponents) {
+            if (projectInfo.servicesComponents.length > 0) {
               paragraphs.push(new Paragraph({
                 children: [new TextRun({ text: "Services Components", bold: true })]
               }));
-              paragraphs.push(new Paragraph({
-                children: [new TextRun({ text: projectInfo.servicesComponents })]
-              }));
+              projectInfo.servicesComponents.forEach(item => {
+                const textRuns = convertFormattedContentToTextRuns([item]);
+                paragraphs.push(new Paragraph({
+                  children: textRuns
+                }));
+              });
             }
             
             if (projectInfo.pricingTable.length > 0) {
@@ -575,6 +739,10 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             });
 
             console.log('Creating DOCX blob...');
+            console.log('Document structure:', {
+              paragraphs: paragraphs.length,
+              hasLogo: projectInfo.customerLogo ? true : false
+            });
             const blob = await Packer.toBlob(doc);
             console.log('DOCX blob created, size:', blob.size);
             
@@ -653,44 +821,222 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
           }
           break;
 
-        case 'gdocs':
-          // Use the same styled HTML as PDF for better fidelity in Google Docs import
-          const gdocsHtml = `
+                case 'gdocs':
+          try {
+            console.log('Starting Google Docs generation...');
+            
+            // Generate HTML optimized for Google Docs import
+            const gdocsHtml = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <title>${selectedDocumentType}</title>
+  <style>
+    body { 
+      font-family: 'Arial', sans-serif; 
+      line-height: 1.6; 
+      margin: 40px; 
+      color: #333;
+    }
+    h1 { 
+      color: #2563eb; 
+      font-size: 24px; 
+      font-weight: bold; 
+      margin-bottom: 20px;
+    }
+    h2 { 
+      color: #1e40af; 
+      font-size: 18px; 
+      font-weight: bold; 
+      margin: 20px 0 10px 0;
+    }
+    h3 { 
+      color: #1e3a8a; 
+      font-size: 16px; 
+      font-weight: bold; 
+      margin: 15px 0 8px 0;
+    }
+    p { 
+      margin: 8px 0; 
+    }
+    .header-info {
+      margin-bottom: 20px;
+    }
+    .section {
+      margin-bottom: 20px;
+    }
+    .content-block {
+      margin-bottom: 15px;
+    }
+    .header-option {
+      font-style: italic; 
+      color: #6b7280; 
+      font-size: 12px; 
+      margin: 5px 0;
+    }
+    .footer-option {
+      font-style: italic; 
+      color: #6b7280; 
+      font-size: 12px; 
+      margin: 5px 0;
+    }
+    table {
+      width: 100%; 
+      border-collapse: collapse; 
+      margin-top: 10px; 
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #e2e8f0; 
+      padding: 6px; 
+      text-align: left;
+    }
+    th {
+      background-color: #f8fafc;
+    }
+    .total-row {
+      background-color: #f8fafc; 
+      font-weight: bold;
+    }
+    .footer {
+      text-align: center; 
+      margin-top: 40px; 
+      padding-top: 20px; 
+      border-top: 1px solid #e2e8f0; 
+      color: #64748b; 
+      font-size: 12px;
+    }
+  </style>
 </head>
 <body>
-  <h1>${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
-  ${Object.entries(selectedBlocks.reduce((acc, block) => {
-    if (!acc[block.category]) acc[block.category] = [];
-    acc[block.category].push(block);
-    return acc;
-  }, {} as Record<string, TextBlock[]>)).map(([category, blocks]) => `
-  <h2>${category}</h2>
-  ${blocks.map(block => {
+  <div class="header-info">
+    <h1>${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
+    <p><strong>Customer:</strong> ${projectInfo.customerName || 'N/A'}</p>
+    <p><strong>Project:</strong> ${projectInfo.projectName || 'N/A'}</p>
+    ${projectInfo.startDate ? `<p><strong>Start Date:</strong> ${formatDate(projectInfo.startDate)}</p>` : ''}
+  </div>
+
+  <div class="section">
+    <h2>Project Overview</h2>
+    <p>${projectInfo.projectOverview || 'No project overview provided.'}</p>
+  </div>
+
+  <div class="section">
+    <h2>Technical Overview</h2>
+    <p>${projectInfo.technicalOverview || 'No technical overview provided.'}</p>
+  </div>
+
+  ${selectedBlocks.map((block, index) => {
     const titleStyle = buildInlineStyleFromFormatting(block.titleFormatting);
     const contentStyle = buildInlineStyleFromFormatting(block.contentFormatting);
-    const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.25rem;">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</div>` : '';
-    const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<div style="font-size: 0.75rem; color: #6b7280; margin-top: 0.5rem;">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</div>` : '';
+    const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<p class="header-option">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</p>` : '';
+    const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<p class="footer-option">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</p>` : '';
     const contentHTML = (block.formattedContent && block.formattedContent.length > 0)
       ? convertFormattedContentToHTML(block.formattedContent)
       : block.content.replace(/\n/g, '<br>');
     return `
-    <div>
-      <h4 style="${titleStyle}">${block.title}</h4>
+    <div class="content-block">
+      <p><span style="${titleStyle}"><strong>${index + 1}. ${block.title}</strong></span></p>
       ${headerHTML}
-      <div style="${contentStyle}">${contentHTML}</div>
+      <p style="${contentStyle}">${contentHTML}</p>
       ${footerHTML}
     </div>`;
   }).join('')}
-  `).join('')}
+
+  ${(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) ? `
+  <div class="section">
+    <h2>Pricing & Components</h2>
+    ${projectInfo.hardwareComponents.length > 0 ? `
+    <div class="content-block">
+      <h3>Hardware Components</h3>
+      <div>
+        ${projectInfo.hardwareComponents.map(item => `
+          <p>• ${convertFormattedContentToHTML([item])}</p>
+        `).join('')}
+      </div>
+    </div>
+    ` : ''}
+    ${projectInfo.servicesComponents.length > 0 ? `
+    <div class="content-block">
+      <h3>Services Components</h3>
+      <div>
+        ${projectInfo.servicesComponents.map(item => `
+          <p>• ${convertFormattedContentToHTML([item])}</p>
+        `).join('')}
+      </div>
+    </div>
+    ` : ''}
+    ${projectInfo.pricingTable.length > 0 ? `
+    <div class="content-block">
+      <h3>Pricing Structure</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>Description</th>
+            <th style="text-align: right;">Price ($)</th>
+            <th style="text-align: right;">Extended ($)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${projectInfo.pricingTable.map(item => `
+            <tr>
+              <td>${item.item || 'N/A'}</td>
+              <td>${item.quantity}</td>
+              <td>${item.description || 'N/A'}</td>
+              <td style="text-align: right;">$${item.price.toFixed(2)}</td>
+              <td style="text-align: right;">$${item.extendedPrice.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+          <tr class="total-row">
+            <td colspan="4" style="text-align: right;">Total:</td>
+            <td style="text-align: right;">$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+  </div>
+  ` : ''}
+
+  <div class="footer">
+    <p><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
+  </div>
 </body>
 </html>`;
-          downloadFile(gdocsHtml, `${baseFilename}.html`, 'text/html');
-          alert('HTML file generated for Google Docs. Open Google Docs, File -> Open -> Upload this HTML.');
+
+            // Create a .gdoc file (which is actually a text file with a Google Docs URL)
+            const gdocContent = `{"url": "https://docs.google.com/document/d/placeholder", "doc_id": "placeholder"}`;
+            
+            // Save as .gdoc file
+            downloadFile(gdocContent, `${baseFilename}.gdoc`, 'application/vnd.google-apps.document');
+            
+            // Also save the HTML version for easy import
+            downloadFile(gdocsHtml, `${baseFilename}_for_import.html`, 'text/html');
+            
+            // Provide instructions for creating Google Doc
+//             const instructions = `
+// Google Docs file generated successfully!
+
+// To create a Google Doc:
+// 1. Open Google Docs (docs.google.com)
+// 2. Click "File" → "Open"
+// 3. Click "Upload" tab
+// 4. Drag and drop the "${baseFilename}_for_import.html" file
+// 5. Google Docs will convert it to a native Google Doc format
+
+// The .gdoc file is also saved for reference.
+//             `;
+            
+            // alert(instructions);
+            console.log('Google Docs files generated successfully');
+            
+          } catch (error) {
+            console.error('Error generating Google Docs file:', error);
+            alert('Error generating Google Docs file. Please try again.');
+          }
           break;
 
         default:
