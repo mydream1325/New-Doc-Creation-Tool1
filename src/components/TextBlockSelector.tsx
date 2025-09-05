@@ -1,10 +1,22 @@
 import React, { useState, useRef } from 'react';
 import { Search, Plus, Edit, Trash2, Check, X, Grid, List, Star, Upload } from 'lucide-react';
-import { TextBlock, FormattedContent } from '../types';
+import { TextBlock, FormattedContent, TextFormatting } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { RichTextEditor } from './RichTextEditor';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
+/**
+ * TextBlockSelector Component
+ * 
+ * IMPORTANT: Content Preservation Behavior
+ * - When content is manually entered in text boxes, it is preserved
+ * - New uploaded content is ALWAYS appended to existing content, never replaces it
+ * - This ensures that manual work is never lost when uploading additional content
+ * - Formatted content from uploads is merged with existing formatted content
+ * - Plain text uploads are added as new formatted content items
+ */
 
 interface TextBlockSelectorProps {
   textBlocks: TextBlock[];
@@ -72,28 +84,70 @@ const renderFormattedContent = (formattedContent: FormattedContent[] | undefined
     }
 
     // Apply color
-    // if (item.style?.color) {
-    //   style.color = item.style.color;
-    // }
+    if (item.style?.color) {
+      style.color = item.style.color;
+    }
 
-    // const textContent = maxLength && currentLength + item.text.length > maxLength 
-    //   ? item.text.substring(0, maxLength - currentLength)
-    //   : item.text;
+    // Apply font family
+    if (item.style?.fontFamily) {
+      style.fontFamily = item.style.fontFamily;
+    }
 
-    // elements.push(
-    //   <span
-    //     key={`${currentLength}-${item.text.substring(0, 10)}`}
-    //     className={className.join(' ')}
-    //     style={style}
-    //   >
-    //     {textContent}
-    //   </span>
-    // );
+    // Process text content with line breaks and lists
+    const textContent = maxLength && currentLength + item.text.length > maxLength 
+      ? item.text.substring(0, maxLength - currentLength)
+      : item.text;
 
-    // currentLength += item.text.length;
-    // if (maxLength && currentLength >= maxLength) {
-    //   break;
-    // }
+    // Split text by newlines to handle line breaks and lists
+    const lines = textContent.split('\n');
+    const lineElements: React.ReactNode[] = [];
+
+    lines.forEach((line, lineIndex) => {
+      if (line.trim() === '') {
+        lineElements.push(<br key={`br-${lineIndex}`} />);
+      } else if (line.trim().startsWith('•')) {
+        // Bulleted list item
+        lineElements.push(
+          <div key={`bullet-${lineIndex}`} className="flex items-start ml-4">
+            <span className="mr-2 text-gray-600">•</span>
+            <span className={className.join(' ')} style={style}>
+              {line.trim().substring(1).trim()}
+            </span>
+          </div>
+        );
+      } else if (/^\d+\./.test(line.trim())) {
+        // Numbered list item
+        const match = line.trim().match(/^(\d+)\.\s*(.*)/);
+        if (match) {
+          lineElements.push(
+            <div key={`numbered-${lineIndex}`} className="flex items-start ml-4">
+              <span className="mr-2 text-gray-600 font-medium">{match[1]}.</span>
+              <span className={className.join(' ')} style={style}>
+                {match[2]}
+              </span>
+            </div>
+          );
+        }
+      } else {
+        // Regular text line
+        lineElements.push(
+          <span key={`text-${lineIndex}`} className={className.join(' ')} style={style}>
+            {line}
+          </span>
+        );
+      }
+    });
+
+    elements.push(
+      <span key={`${currentLength}-${item.text.substring(0, 10)}`}>
+        {lineElements}
+      </span>
+    );
+
+    currentLength += item.text.length;
+    if (maxLength && currentLength >= maxLength) {
+      break;
+    }
   }
 
   return <>{elements}</>;
@@ -126,20 +180,31 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
   textBlocks,
   onBlocksChange
 }) => {
+  // Refs for file inputs
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [isAddingBlock, setIsAddingBlock] = useState(false);
   // Update newBlock state to include headerOptions, footerOptions, and formatting options
-  const [newBlock, setNewBlock] = useState({ 
+  const [newBlock, setNewBlock] = useState<{
+    title: string;
+    content: string;
+    category: string;
+    headerOptions: string[];
+    footerOptions: string[];
+    maintainFormatting: boolean;
+    formattedContent: FormattedContent[] | undefined;
+    titleFormatting: TextFormatting;
+    contentFormatting: TextFormatting;
+  }>({ 
     title: '', 
     content: '', 
     category: 'Custom', 
     headerOptions: ['', ''], 
     footerOptions: ['', ''],
     maintainFormatting: false,
-    formattedContent: undefined as FormattedContent[] | undefined,
+    formattedContent: undefined,
     titleFormatting: {
-      fontFamily: 'Inter',
+      fontFamily: 'Arial',
       fontSize: 'base',
       bold: false,
       italic: false,
@@ -147,12 +212,12 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
       color: '#000000'
     },
     contentFormatting: {
-      fontFamily: 'Inter',
+      fontFamily: 'Arial',
       fontSize: 'base',
       bold: false,
       italic: false,
       underline: false,
-      // color: '#000000'
+      color: undefined
     }
   });
   
@@ -167,28 +232,27 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
       // Map common font families to our available options
       const mapFontFamily = (fontFamily: string) => {
         const font = fontFamily.toLowerCase();
-        if (font.includes('arial') || font.includes('helvetica')) return 'Inter';
-        if (font.includes('times') || font.includes('serif')) return 'Inter';
-        if (font.includes('courier') || font.includes('mono')) return 'Inter';
+        if (font.includes('arial') || font.includes('helvetica')) return 'Arial';
+        if (font.includes('times') || font.includes('serif')) return 'Arial';
+        if (font.includes('courier') || font.includes('mono')) return 'Arial';
         if (font.includes('montserrat')) return 'Montserrat';
         if (font.includes('nunito')) return 'Nunito';
         if (font.includes('source') && font.includes('sans')) return 'Source Sans Pro';
         if (font.includes('ubuntu')) return 'Ubuntu';
         if (font.includes('work') && font.includes('sans')) return 'Work Sans';
-        return 'Inter'; // Default fallback
+        return 'Arial'; // Default fallback
       };
       
+      // Only update the contentFormatting, don't overwrite formattedContent
       setNewBlock({
         ...newBlock,
-        content: newBlock.content, // Keep existing content
-        formattedContent: formattedContent, // Store the formatted content
         contentFormatting: {
-          fontFamily: firstStyle.fontFamily ? mapFontFamily(firstStyle.fontFamily) : 'Inter',
+          fontFamily: firstStyle.fontFamily ? mapFontFamily(firstStyle.fontFamily) : 'Arial',
           fontSize: firstStyle.fontSize || 'base',
           bold: firstStyle.bold || false,
           italic: firstStyle.italic || false,
           underline: firstStyle.underline || false,
-          // color: firstStyle.color || '#000000'
+          color: firstStyle.color || undefined
         }
       });
     }
@@ -231,9 +295,9 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
         footerOptions: newBlock.footerOptions,
         titleFormatting: newBlock.titleFormatting,
         contentFormatting: newBlock.contentFormatting,
-        // Use formatted content if maintainFormatting is enabled (from either extracted content or existing block)
-        formattedContent: newBlock.maintainFormatting && (extractedFormattedContent || newBlock.formattedContent) ? 
-          (extractedFormattedContent || newBlock.formattedContent) : undefined
+        // Always preserve formatted content from RichTextEditor, or extracted content if maintainFormatting is enabled
+        formattedContent: newBlock.formattedContent || 
+          (newBlock.maintainFormatting && extractedFormattedContent ? extractedFormattedContent : undefined)
       };
       onBlocksChange([...textBlocks, block]);
       setNewBlock({ 
@@ -245,7 +309,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
         maintainFormatting: false,
         formattedContent: undefined,
         titleFormatting: {
-          fontFamily: 'Inter',
+          fontFamily: 'Arial',
           fontSize: 'base',
           bold: false,
           italic: false,
@@ -253,7 +317,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
           color: '#000000'
         },
         contentFormatting: {
-          fontFamily: 'Inter',
+          fontFamily: 'Arial',
           fontSize: 'base',
           bold: false,
           italic: false,
@@ -277,8 +341,8 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
         block.id === editBlock.id ? { 
           ...editBlock,
           content: editBlock.content,
-          // Clear formattedContent when content is edited to ensure the new content is displayed
-          formattedContent: undefined,
+          // Preserve formattedContent to maintain formatting effects (bold, italic, underline)
+          formattedContent: editBlock.formattedContent,
           headerOptions: editBlock.headerOptions || ['', ''],
           footerOptions: editBlock.footerOptions || ['', '']
         } : block
@@ -322,7 +386,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
       headerOptions: block.headerOptions && block.headerOptions.length === 2 ? block.headerOptions : [block.headerOptions?.[0] || '', block.headerOptions?.[1] || ''],
       footerOptions: block.footerOptions && block.footerOptions.length === 2 ? block.footerOptions : [block.footerOptions?.[0] || '', block.footerOptions?.[1] || ''],
       titleFormatting: block.titleFormatting || {
-        fontFamily: 'Inter',
+        fontFamily: 'Arial',
         fontSize: 'base',
         bold: false,
         italic: false,
@@ -330,7 +394,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
         // color: '#000000'
       },
       contentFormatting: block.contentFormatting || {
-        fontFamily: 'Inter',
+        fontFamily: 'Arial',
         fontSize: 'base',
         bold: false,
         italic: false,
@@ -410,6 +474,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white/80 backdrop-blur-sm transition-all duration-300"
+                      style={{ textAlign: 'left' }}
                     />
                   </div>
                   
@@ -469,6 +534,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                         value={newBlock.title}
                         onChange={(e) => setNewBlock({ ...newBlock, title: e.target.value })}
                         className="px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                        style={{ textAlign: 'left' }}
                       />
                       <select
                         value={newBlock.category}
@@ -511,7 +577,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                             })}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm"
                           >
-                            <option value="Inter">Inter</option>
+                            <option value="Arial">Arial</option>
                             <option value="Roboto">Roboto</option>
                             <option value="Open Sans">Open Sans</option>
                             {/* <option value="Lato">Lato</option>
@@ -600,15 +666,133 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                             Underline
                           </button>
                         </div>
+                        
+                        {/* Heading Controls */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-2">Heading Style</label>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setNewBlock({
+                                ...newBlock,
+                                titleFormatting: { 
+                                  ...newBlock.titleFormatting, 
+                                  fontSize: newBlock.titleFormatting.fontSize === '3xl' ? 'base' : '3xl',
+                                  bold: newBlock.titleFormatting.fontSize === '3xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                newBlock.titleFormatting.fontSize === '3xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H1
+                            </button>
+                            <button
+                              onClick={() => setNewBlock({
+                                ...newBlock,
+                                titleFormatting: { 
+                                  ...newBlock.titleFormatting, 
+                                  fontSize: newBlock.titleFormatting.fontSize === '2xl' ? 'base' : '2xl',
+                                  bold: newBlock.titleFormatting.fontSize === '2xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                newBlock.titleFormatting.fontSize === '2xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H2
+                            </button>
+                            <button
+                              onClick={() => setNewBlock({
+                                ...newBlock,
+                                titleFormatting: { 
+                                  ...newBlock.titleFormatting, 
+                                  fontSize: newBlock.titleFormatting.fontSize === 'xl' ? 'base' : 'xl',
+                                  bold: newBlock.titleFormatting.fontSize === 'xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                newBlock.titleFormatting.fontSize === 'xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H3
+                            </button>
+                          </div>
+                        </div>
+                        
+                        {/* Indentation Controls */}
+                        <div>
+                          {/* <label className="block text-xs font-medium text-gray-700 mb-2">Indentation</label> */}
+                          <div className="flex gap-2">
+                            {/* <button
+                              onClick={() => {
+                                const textarea = newBlockTextareaRef.current;
+                                if (textarea && textarea.selectionStart !== null && textarea.selectionEnd !== null) {
+                                  const start = textarea.selectionStart;
+                                  const end = textarea.selectionEnd;
+                                  const selectedText = newBlock.content?.substring(start, end) || '';
+                                  const lines = selectedText ? selectedText.split('\n') : [''];
+                                  const indentedText = lines.map(line => `    ${line}`).join('\n');
+                                  const newContent = newBlock.content?.substring(0, start) + indentedText + newBlock.content?.substring(end);
+                                  setNewBlock({ ...newBlock, content: newContent });
+                                  setTimeout(() => {
+                                    textarea.focus();
+                                    textarea.setSelectionRange(start + indentedText.length, start + indentedText.length);
+                                  }, 0);
+                                }
+                              }}
+                              className="px-3 py-2 rounded-lg text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              title="Increase Indentation"
+                            >
+                              Indent
+                            </button> */}
+                            {/* <button
+                              onClick={() => {
+                                const textarea = newBlockTextareaRef.current;
+                                if (textarea && textarea.selectionStart !== null && textarea.selectionEnd !== null) {
+                                  const start = textarea.selectionStart;
+                                  const end = textarea.selectionEnd;
+                                  const selectedText = newBlock.content?.substring(start, end) || '';
+                                  const lines = selectedText ? selectedText.split('\n') : [''];
+                                  const unindentedText = lines.map(line => {
+                                    // Remove up to 4 spaces from the beginning of each line
+                                    return line.replace(/^    /, '');
+                                  }).join('\n');
+                                  const newContent = newBlock.content?.substring(0, start) + unindentedText + newBlock.content?.substring(end);
+                                  setNewBlock({ ...newBlock, content: newContent });
+                                  setTimeout(() => {
+                                    textarea.focus();
+                                    textarea.setSelectionRange(start + unindentedText.length, start + unindentedText.length);
+                                  }, 0);
+                                }
+                              }}
+                              className="px-3 py-2 rounded-lg text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              title="Decrease Indentation"
+                            >
+                              Outdent
+                            </button> */}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-3">
-                      <textarea
-                        placeholder="Block content"
+                      
+                      <RichTextEditor
                         value={newBlock.content}
-                        onChange={(e) => setNewBlock({ ...newBlock, content: e.target.value })}
+                        formattedContent={newBlock.formattedContent}
+                        onChange={(content, formattedContent) => setNewBlock({ 
+                          ...newBlock, 
+                          content,
+                          formattedContent
+                        })}
+                        placeholder="Block content"
+                        className="w-full"
                         rows={6}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white resize-none"
                       />
                       
                       {/* Show formatted content preview when maintainFormatting is enabled */}
@@ -748,7 +932,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                   const doc = parser.parseFromString(html, 'text/html');
                                   
                                   // Extract text content with formatting
-                                  const formattedContent: FormattedContent[] = [];
+                                  const extractedFormattedContent: FormattedContent[] = [];
                                   
                                   // Function to process nodes and extract formatting
                                   const processNode = (node: Node) => {
@@ -825,12 +1009,12 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                             style.underline = true;
                                           }
                                           
-                                          formattedContent.push({
+                                          extractedFormattedContent.push({
                                             text: node.textContent,
                                             style
                                           });
                                         } else {
-                                          formattedContent.push({
+                                          extractedFormattedContent.push({
                                             text: node.textContent
                                           });
                                         }
@@ -891,7 +1075,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                       // Process child nodes
                                       for (const child of Array.from(element.childNodes)) {
                                         if (child.nodeType === Node.TEXT_NODE && child.textContent) {
-                                          formattedContent.push({
+                                          extractedFormattedContent.push({
                                             text: child.textContent,
                                             style
                                           });
@@ -915,24 +1099,55 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                   text = doc.body.textContent || '';
                                   
                                   // Store the extracted formatted content
-                                  setExtractedFormattedContent(formattedContent);
+                                  setExtractedFormattedContent(extractedFormattedContent);
                                   
                                   // Update content formatting to match the first formatted element
-                                  if (formattedContent.length > 0 && formattedContent[0].style) {
-                                    // Update both content and formatting
-                                    setNewBlock({
-                                      ...newBlock,
-                                      content: text,
-                                      formattedContent: formattedContent // Store in newBlock state
+                                  if (extractedFormattedContent.length > 0 && extractedFormattedContent[0].style) {
+                                    // Smart content handling: always append to existing content
+                                    const existingContent = newBlock.content || '';
+                                    const separator = existingContent && text ? '\n\n' : '';
+                                    const newContent = existingContent + separator + text;
+                                    
+                                    // Merge existing formatted content with new uploaded content
+                                    const existingFormattedContent = newBlock.formattedContent || [];
+                                    const mergedFormattedContent = [
+                                      ...existingFormattedContent,
+                                      ...extractedFormattedContent
+                                    ];
+                                    
+                                    console.log('DOCX Upload: Merging formatted content', {
+                                      existingContent: existingContent.length,
+                                      newContent: text.length,
+                                      mergedContent: newContent.length,
+                                      existingFormattedContent: existingFormattedContent.length,
+                                      extractedFormattedContent: extractedFormattedContent.length,
+                                      mergedFormattedContent: mergedFormattedContent.length
                                     });
-                                    // Apply the extracted formatting
-                                    applyExtractedFormatting(formattedContent);
-                                  } else {
-                                    // If no formatting found, just update the content
+                                    
                                     setNewBlock({
                                       ...newBlock,
-                                      content: text,
-                                      formattedContent: formattedContent
+                                      content: newContent,
+                                      formattedContent: mergedFormattedContent
+                                    });
+                                    
+                                    // Apply the extracted formatting
+                                    applyExtractedFormatting(extractedFormattedContent);
+                                  } else {
+                                    // If no formatting found, just update the content - always append
+                                    const existingContent = newBlock.content || '';
+                                    const separator = existingContent && text ? '\n\n' : '';
+                                    const newContent = existingContent + separator + text;
+                                    
+                                    console.log('DOCX Upload: Merging plain content', {
+                                      existingContent: existingContent.length,
+                                      newContent: text.length,
+                                      mergedContent: newContent.length
+                                    });
+                                    
+                                    setNewBlock({
+                                      ...newBlock,
+                                      content: newContent,
+                                      formattedContent: newBlock.formattedContent // Preserve existing formatting
                                     });
                                   }
                                 } else {
@@ -951,11 +1166,32 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                               text = await file.text();
                             }
                             
-                            // Only update if we haven't already updated the state above
+                            // Handle content merging for all file types
+                            // Always append new content to existing content, never replace
                             if (!newBlock.maintainFormatting || !formattedContent || formattedContent.length === 0) {
+                              const existingContent = newBlock.content || '';
+                              const separator = existingContent && text ? '\n\n' : '';
+                              const newContent = existingContent + separator + text;
+                              
+                              // Preserve existing formatted content and append new plain text
+                              const existingFormattedContent = newBlock.formattedContent || [];
+                              const newFormattedContent = [
+                                ...existingFormattedContent,
+                                { text: separator + text } // Add new content as plain text
+                              ];
+                              
+                              console.log('Upload: Merging content', {
+                                existingContent: existingContent.length,
+                                newContent: text.length,
+                                mergedContent: newContent.length,
+                                existingFormattedContent: existingFormattedContent.length,
+                                newFormattedContent: newFormattedContent.length
+                              });
+                              
                               setNewBlock({ 
                                 ...newBlock, 
-                                content: text
+                                content: newContent,
+                                formattedContent: newFormattedContent
                               });
                             }
                           }}
@@ -964,7 +1200,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                           Upload Content
                         </label>
                         <button
-                          onClick={() => setNewBlock({ ...newBlock, content: '' })}
+                          onClick={() => setNewBlock({ ...newBlock, content: '', formattedContent: undefined })}
                           className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all text-xs"
                         >
                           Clear Content
@@ -975,137 +1211,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                       </div>
                     </div>
 
-                    {/* Content Formatting Options */}
-                    <div className={`bg-gray-50 rounded-xl p-4 ${newBlock.maintainFormatting ? 'opacity-50' : ''}`}>
-                      <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
-                        <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                        Content Formatting
-                        {newBlock.maintainFormatting && (
-                          <span className="ml-2 text-xs text-purple-600 bg-purple-100 px-2 py-1 rounded">
-                            Disabled - Using uploaded formatting
-                          </span>
-                        )}
-                      </h5>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
-                          <select
-                            value={newBlock.contentFormatting.fontFamily}
-                            onChange={(e) => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, fontFamily: e.target.value }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm ${
-                              newBlock.maintainFormatting ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
-                          >
-                            <option value="Inter">Inter</option>
-                            <option value="Roboto">Roboto</option>
-                            <option value="Open Sans">Open Sans</option>
-                            {/* <option value="Lato">Lato</option>
-                            <option value="Poppins">Poppins</option>
-                            <option value="Montserrat">Montserrat</option>
-                            <option value="Nunito">Nunito</option>
-                            <option value="Source Sans Pro">Source Sans Pro</option>
-                            <option value="Ubuntu">Ubuntu</option>
-                            <option value="Work Sans">Work Sans</option>
-                            <option value="Arial">Arial</option>
-                            <option value="Times New Roman">Times New Roman</option>
-                            <option value="Georgia">Georgia</option>
-                            <option value="Verdana">Verdana</option>
-                            <option value="Helvetica">Helvetica</option> */}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Font Size</label>
-                          <select
-                            value={newBlock.contentFormatting.fontSize}
-                            onChange={(e) => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, fontSize: e.target.value }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm ${
-                              newBlock.maintainFormatting ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
-                          >
-                            <option value="xs">Extra Small</option>
-                            <option value="sm">Small</option>
-                            <option value="base">Base</option>
-                            <option value="lg">Large</option>
-                            <option value="xl">Extra Large</option>
-                            <option value="2xl">2XL</option>
-                            <option value="3xl">3XL</option>
-                          </select>
-                        </div>
-                        {/* <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
-                          <input
-                            type="color"
-                            value={newBlock.contentFormatting.color}
-                            onChange={(e) => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, color: e.target.value }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`w-full h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white ${
-                              newBlock.maintainFormatting ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
-                          />
-                        </div> */}
-                        <div className="flex items-end gap-2">
-                          <button
-                            onClick={() => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, bold: !newBlock.contentFormatting.bold }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              newBlock.maintainFormatting 
-                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                                : newBlock.contentFormatting.bold 
-                                ? 'bg-green-500 text-white' 
-                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Bold
-                          </button>
-                          <button
-                            onClick={() => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, italic: !newBlock.contentFormatting.italic }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              newBlock.maintainFormatting 
-                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                                : newBlock.contentFormatting.italic 
-                                ? 'bg-green-500 text-white' 
-                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Italic
-                          </button>
-                          <button
-                            onClick={() => setNewBlock({
-                              ...newBlock,
-                              contentFormatting: { ...newBlock.contentFormatting, underline: !newBlock.contentFormatting.underline }
-                            })}
-                            disabled={newBlock.maintainFormatting}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              newBlock.maintainFormatting 
-                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                                : newBlock.contentFormatting.underline 
-                                ? 'bg-green-500 text-white' 
-                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Underline
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+
                     {/* <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-semibold mb-1">Header Option 1</label>
@@ -1152,19 +1258,45 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                         <Check className="w-4 h-4" />
                         Add Block
                       </button>
-                      <button
-                        onClick={() => {
-                          setIsAddingBlock(false);
-                          // Reset file input
-                          if (addBlockFileInputRef.current) {
-                            addBlockFileInputRef.current.value = '';
-                          }
-                        }}
-                        className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition-all duration-300 flex items-center gap-2"
-                      >
-                        <X className="w-4 h-4" />
-                        Cancel
-                      </button>
+                                              <button
+                          onClick={() => {
+                            setIsAddingBlock(false);
+                            // Reset newBlock to initial state
+                            setNewBlock({ 
+                              title: '', 
+                              content: '', 
+                              category: 'Custom', 
+                              headerOptions: ['', ''], 
+                              footerOptions: ['', ''],
+                              maintainFormatting: false,
+                              formattedContent: undefined,
+                              titleFormatting: {
+                                fontFamily: 'Arial',
+                                fontSize: 'base',
+                                bold: false,
+                                italic: false,
+                                underline: false,
+                                color: '#000000'
+                              },
+                              contentFormatting: {
+                                fontFamily: 'Arial',
+                                fontSize: 'base',
+                                bold: false,
+                                italic: false,
+                                underline: false,
+                                color: undefined
+                              }
+                            });
+                            // Reset file input
+                            if (addBlockFileInputRef.current) {
+                              addBlockFileInputRef.current.value = '';
+                            }
+                          }}
+                          className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition-all duration-300 flex items-center gap-2"
+                        >
+                          <X className="w-4 h-4" />
+                          Cancel
+                        </button>
                     </div>
                   </div>
                 </div>
@@ -1191,14 +1323,23 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                         value={editBlock.title}
                         onChange={e => setEditBlock({ ...editBlock, title: e.target.value })}
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                        style={{ textAlign: 'left' }}
                       />
-                      <textarea
-                        placeholder="Block content"
-                        value={editBlock.content || ''}
-                        onChange={e => setEditBlock({ ...editBlock, content: e.target.value })}
-                        rows={6}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white resize-none"
-                      />
+                      <div className="space-y-2">
+                        
+                        <RichTextEditor
+                          value={editBlock.content || ''}
+                          formattedContent={editBlock.formattedContent}
+                          onChange={(content, formattedContent) => setEditBlock({ 
+                            ...editBlock, 
+                            content,
+                            formattedContent
+                          })}
+                          placeholder="Block content"
+                          className="w-full"
+                          rows={6}
+                        />
+                      </div>
                       <div className="flex items-center gap-2">
                         <input
                           type="file"
@@ -1243,14 +1384,39 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                               // TXT or fallback
                               text = await file.text();
                             }
-                            setEditBlock({ ...editBlock, content: text });
+                            
+                            // Always append new content to existing content, never replace
+                            const existingContent = editBlock.content || '';
+                            const separator = existingContent && text ? '\n\n' : '';
+                            const newContent = existingContent + separator + text;
+                            
+                            // Preserve existing formatted content and append new plain text
+                            const existingFormattedContent = editBlock.formattedContent || [];
+                            const newFormattedContent = [
+                              ...existingFormattedContent,
+                              { text: separator + text } // Add new content as plain text
+                            ];
+                            
+                            console.log('Edit Block Upload: Merging content', {
+                              existingContent: existingContent.length,
+                              newContent: text.length,
+                              mergedContent: newContent.length,
+                              existingFormattedContent: existingFormattedContent.length,
+                              newFormattedContent: newFormattedContent.length
+                            });
+                            
+                            setEditBlock({ 
+                              ...editBlock, 
+                              content: newContent,
+                              formattedContent: newFormattedContent
+                            });
                           }}
                         />
                         <label htmlFor="edit-block-upload" className="px-3 py-2 bg-blue-500 text-white rounded-lg cursor-pointer hover:bg-blue-600 transition-all text-xs">
                           Upload Content
                         </label>
                         <button
-                          onClick={() => setEditBlock({ ...editBlock, content: '' })}
+                          onClick={() => setEditBlock({ ...editBlock, content: '', formattedContent: undefined })}
                           className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all text-xs"
                         >
                           Clear Content
@@ -1270,14 +1436,14 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                           <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
                             <select
-                              value={editBlock.titleFormatting?.fontFamily || 'Inter'}
+                              value={editBlock.titleFormatting?.fontFamily || 'Arial'}
                               onChange={(e) => setEditBlock({
                                 ...editBlock,
                                 titleFormatting: { ...editBlock.titleFormatting!, fontFamily: e.target.value }
                               })}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm"
                             >
-                              <option value="Inter">Inter</option>
+                              <option value="Arial">Arial</option>
                               <option value="Roboto">Roboto</option>
                               <option value="Open Sans">Open Sans</option>
                               {/* <option value="Lato">Lato</option>
@@ -1311,18 +1477,73 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                               <option value="3xl">3XL</option>
                             </select>
                           </div>
-                          {/* <div>
+                          <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
-                            <input
-                              type="color"
-                              value={editBlock.titleFormatting?.color || '#000000'}
-                              onChange={(e) => setEditBlock({
-                                ...editBlock,
-                                titleFormatting: { ...editBlock.titleFormatting!, color: e.target.value }
-                              })}
-                              className="w-full h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
-                            />
-                          </div> */}
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => setEditBlock({
+                                  ...editBlock,
+                                  titleFormatting: { ...editBlock.titleFormatting!, color: '#000000' }
+                                })}
+                                className={`w-6 h-6 rounded border-2 transition-all ${
+                                  editBlock.titleFormatting?.color === '#000000'
+                                    ? 'bg-black border-blue-500' 
+                                    : 'bg-black border-gray-300 hover:border-gray-400'
+                                }`}
+                                title="Black"
+                              />
+                              <button
+                                onClick={() => setEditBlock({
+                                  ...editBlock,
+                                  titleFormatting: { ...editBlock.titleFormatting!, color: '#ffffff' }
+                                })}
+                                className={`w-6 h-6 rounded border-2 transition-all ${
+                                  editBlock.titleFormatting?.color === '#ffffff'
+                                    ? 'bg-white border-blue-500' 
+                                    : 'bg-white border-gray-300 hover:border-gray-400'
+                                }`}
+                                title="White"
+                              />
+                              <button
+                                onClick={() => setEditBlock({
+                                  ...editBlock,
+                                  titleFormatting: { ...editBlock.titleFormatting!, color: '#dc2626' }
+                                })}
+                                className={`w-6 h-6 rounded border-2 transition-all ${
+                                  editBlock.titleFormatting?.color === '#dc2626'
+                                    ? 'bg-red-600 border-blue-500' 
+                                    : 'bg-red-600 border-gray-300 hover:border-gray-400'
+                                }`}
+                                title="Red"
+                              />
+                              <button
+                                onClick={() => setEditBlock({
+                                  ...editBlock,
+                                  titleFormatting: { ...editBlock.titleFormatting!, color: '#6b7280' }
+                                })}
+                                className={`w-6 h-6 rounded border-2 transition-all ${
+                                  editBlock.titleFormatting?.color === '#6b7280'
+                                    ? 'bg-gray-500 border-blue-500' 
+                                    : 'bg-gray-500 border-gray-300 hover:border-gray-400'
+                                }`}
+                                title="Gray"
+                              />
+                              {/* <button
+                                onClick={() => setEditBlock({
+                                  ...editBlock,
+                                  titleFormatting: { ...editBlock.titleFormatting!, color: undefined }
+                                })}
+                                className={`px-2 py-1 text-xs rounded border transition-all ${
+                                  !editBlock.titleFormatting?.color
+                                    ? 'bg-blue-500 text-white border-blue-500' 
+                                    : 'bg-gray-200 text-gray-700 border-gray-300 hover:bg-gray-300'
+                                }`}
+                                title="Default"
+                              >
+                                D
+                              </button> */}
+                            </div>
+                          </div>
                         </div>
                         <div className="flex items-end gap-2 mt-2">
                           <button
@@ -1359,108 +1580,121 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                             Underline
                           </button>
                         </div>
+                        
+                        {/* Heading Controls for Edit */}
+                        <div className="mt-3">
+                          <label className="block text-xs font-medium text-gray-700 mb-2">Heading Style</label>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setEditBlock({
+                                ...editBlock,
+                                titleFormatting: { 
+                                  ...editBlock.titleFormatting!, 
+                                  fontSize: editBlock.titleFormatting?.fontSize === '3xl' ? 'base' : '3xl',
+                                  bold: editBlock.titleFormatting?.fontSize === '3xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                editBlock.titleFormatting?.fontSize === '3xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H1
+                            </button>
+                            <button
+                              onClick={() => setEditBlock({
+                                ...editBlock,
+                                titleFormatting: { 
+                                  ...editBlock.titleFormatting!, 
+                                  fontSize: editBlock.titleFormatting?.fontSize === '2xl' ? 'base' : '2xl',
+                                  bold: editBlock.titleFormatting?.fontSize === '2xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                editBlock.titleFormatting?.fontSize === '2xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H2
+                            </button>
+                            <button
+                              onClick={() => setEditBlock({
+                                ...editBlock,
+                                titleFormatting: { 
+                                  ...editBlock.titleFormatting!, 
+                                  fontSize: editBlock.titleFormatting?.fontSize === 'xl' ? 'base' : 'xl',
+                                  bold: editBlock.titleFormatting?.fontSize === 'xl' ? false : true
+                                }
+                              })}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                editBlock.titleFormatting?.fontSize === 'xl' 
+                                  ? 'bg-purple-500 text-white' 
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                            >
+                              H3
+                            </button>
+                          </div>
+                        </div>
+                        
+                        {/* Indentation Controls for Edit Title */}
+                        <div className="mt-3">
+                          {/* <label className="block text-xs font-medium text-gray-700 mb-2">Indentation</label> */}
+                          <div className="flex gap-2">
+                            {/* <button
+                              onClick={() => {
+                                const input = document.querySelector('input[placeholder="Block title"]') as HTMLInputElement;
+                                if (input && input.selectionStart !== null && input.selectionEnd !== null) {
+                                  const start = input.selectionStart;
+                                  const end = input.selectionEnd;
+                                  const selectedText = editBlock.title?.substring(start, end) || '';
+                                  const lines = selectedText ? selectedText.split('\n') : [''];
+                                  const indentedText = lines.map(line => `    ${line}`).join('\n');
+                                  const newTitle = editBlock.title?.substring(0, start) + indentedText + editBlock.title?.substring(end);
+                                  setEditBlock({ ...editBlock, title: newTitle });
+                                  setTimeout(() => {
+                                    input.focus();
+                                    input.setSelectionRange(start + indentedText.length, start + indentedText.length);
+                                  }, 0);
+                                }
+                              }}
+                              className="px-3 py-2 rounded-lg text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              title="Increase Indentation"
+                            >
+                              Indent
+                            </button> */}
+                            {/* <button
+                              onClick={() => {
+                                const input = document.querySelector('input[placeholder="Block title"]') as HTMLInputElement;
+                                if (input && input.selectionStart !== null && input.selectionEnd !== null) {
+                                  const start = input.selectionStart;
+                                  const end = input.selectionEnd;
+                                  const selectedText = editBlock.title?.substring(start, end) || '';
+                                  const lines = selectedText ? selectedText.split('\n') : [''];
+                                  const unindentedText = lines.map(line => {
+                                    // Remove up to 4 spaces from the beginning of each line
+                                    return line.replace(/^    /, '');
+                                  }).join('\n');
+                                  const newTitle = editBlock.title?.substring(0, start) + unindentedText + editBlock.title?.substring(end);
+                                  setEditBlock({ ...editBlock, title: newTitle });
+                                  setTimeout(() => {
+                                    input.focus();
+                                    input.setSelectionRange(start + unindentedText.length, start + unindentedText.length);
+                                  }, 0);
+                                }
+                              }}
+                              className="px-3 py-2 rounded-lg text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+                              title="Decrease Indentation"
+                            >
+                              Outdent
+                            </button> */}
+                          </div>
+                        </div>
                       </div>
 
-                      {/* Content Formatting */}
-                      <div className="bg-gray-50 rounded-xl p-4">
-                        <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
-                          <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                          Content Formatting
-                        </h5>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
-                            <select
-                              value={editBlock.contentFormatting?.fontFamily || 'Inter'}
-                              onChange={(e) => setEditBlock({
-                                ...editBlock,
-                                contentFormatting: { ...editBlock.contentFormatting!, fontFamily: e.target.value }
-                              })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm"
-                            >
-                              <option value="Inter">Inter</option>
-                              <option value="Roboto">Roboto</option>
-                              <option value="Open Sans">Open Sans</option>
-                              {/* <option value="Lato">Lato</option>
-                              <option value="Poppins">Poppins</option>
-                              <option value="Montserrat">Montserrat</option>
-                              <option value="Nunito">Nunito</option>
-                              <option value="Source Sans Pro">Source Sans Pro</option>
-                              <option value="Ubuntu">Ubuntu</option>
-                              <option value="Work Sans">Work Sans</option>
-                              <option value="Arial">Arial</option>
-                              <option value="Times New Roman">Times New Roman</option>
-                              <option value="Georgia">Georgia</option> */}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Font Size</label>
-                            <select
-                              value={editBlock.contentFormatting?.fontSize || 'base'}
-                              onChange={(e) => setEditBlock({
-                                ...editBlock,
-                                contentFormatting: { ...editBlock.contentFormatting!, fontSize: e.target.value }
-                              })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white text-sm"
-                            >
-                              <option value="xs">XS</option>
-                              <option value="sm">SM</option>
-                              <option value="base">Base</option>
-                              <option value="lg">LG</option>
-                              <option value="xl">XL</option>
-                              <option value="2xl">2XL</option>
-                              <option value="3xl">3XL</option>
-                            </select>
-                          </div>
-                          {/* <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
-                            <input
-                              type="color"
-                              value={editBlock.contentFormatting?.color || '#000000'}
-                              onChange={(e) => setEditBlock({
-                                ...editBlock,
-                                contentFormatting: { ...editBlock.contentFormatting!, color: e.target.value }
-                              })}
-                              className="w-full h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
-                            />
-                          </div> */}
-                        </div>
-                        <div className="flex items-end gap-2 mt-2">
-                          <button
-                            onClick={() => setEditBlock({
-                              ...editBlock,
-                              contentFormatting: { ...editBlock.contentFormatting!, bold: !editBlock.contentFormatting?.bold }
-                            })}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              editBlock.contentFormatting?.bold ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Bold
-                          </button>
-                          <button
-                            onClick={() => setEditBlock({
-                              ...editBlock,
-                              contentFormatting: { ...editBlock.contentFormatting!, italic: !editBlock.contentFormatting?.italic }
-                            })}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              editBlock.contentFormatting?.italic ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Italic
-                          </button>
-                          <button
-                            onClick={() => setEditBlock({
-                              ...editBlock,
-                              contentFormatting: { ...editBlock.contentFormatting!, underline: !editBlock.contentFormatting?.underline }
-                            })}
-                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                              editBlock.contentFormatting?.underline ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                          >
-                            Underline
-                          </button>
-                        </div>
-                      </div>
+                      {/* Rich Text Editor handles content formatting internally */}
 
                       <div className="flex gap-3">
                         <button
@@ -1571,7 +1805,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                 </svg>
                                 Rich Formatting Available
                               </div>
-                              <button
+                              {/* <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   // Enable maintainFormatting and set the formattedContent for this block
@@ -1592,7 +1826,7 @@ export const TextBlockSelector: React.FC<TextBlockSelectorProps> = ({
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                 </svg>
                                 Use This Formatting
-                              </button>
+                              </button> */}
                             </div>
                           </div>
                         )}

@@ -15,6 +15,7 @@ interface TextFormatting {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  color?: string;
 }
 
 const fontFamilies = [
@@ -60,7 +61,8 @@ export const PricingComponents: React.FC<PricingComponentsProps> = ({
     fontSize: 'base',
     bold: false,
     italic: false,
-    underline: false
+    underline: false,
+    color: undefined
   });
 
   const addBulletPoint = (type: 'hardware' | 'services') => {
@@ -71,7 +73,7 @@ export const PricingComponents: React.FC<PricingComponentsProps> = ({
         italic: selectedFormatting.italic,
         underline: selectedFormatting.underline,
         fontSize: selectedFormatting.fontSize as any,
-        // color: selectedFormatting.color,
+        color: selectedFormatting.color,
         fontFamily: selectedFormatting.fontFamily
       }
     };
@@ -153,7 +155,10 @@ export const PricingComponents: React.FC<PricingComponentsProps> = ({
             value={item.text}
             onChange={(e) => updateBulletPoint(type, index, e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all duration-300"
-            style={style}
+            style={{
+              ...style,
+              textAlign: 'left'
+            }}
           />
         </div>
         
@@ -180,6 +185,50 @@ export const PricingComponents: React.FC<PricingComponentsProps> = ({
             title="Underline"
           >
             <Underline className="w-4 h-4" />
+          </button>
+          
+          {/* Heading Controls for Individual Items */}
+          <button
+            onClick={() => updateBulletFormatting(type, index, { 
+              fontSize: item.style?.fontSize === '3xl' ? 'base' : '3xl',
+              bold: item.style?.fontSize === '3xl' ? false : true
+            })}
+            className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+              item.style?.fontSize === '3xl' 
+                ? 'bg-purple-500 text-white' 
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            title="Heading 1"
+          >
+            H1
+          </button>
+          <button
+            onClick={() => updateBulletFormatting(type, index, { 
+              fontSize: item.style?.fontSize === '2xl' ? 'base' : '2xl',
+              bold: item.style?.fontSize === '2xl' ? false : true
+            })}
+            className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+              item.style?.fontSize === '2xl' 
+                ? 'bg-purple-500 text-white' 
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            title="Heading 2"
+          >
+            H2
+          </button>
+          <button
+            onClick={() => updateBulletFormatting(type, index, { 
+              fontSize: item.style?.fontSize === 'xl' ? 'base' : 'xl',
+              bold: item.style?.fontSize === 'xl' ? false : true
+            })}
+            className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+              item.style?.fontSize === 'xl' 
+                ? 'bg-purple-500 text-white' 
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            title="Heading 3"
+          >
+            H3
           </button>
           
           <select
@@ -298,15 +347,154 @@ export const PricingComponents: React.FC<PricingComponentsProps> = ({
             </button>
           </div>
           
-          {/* <div className="flex items-center space-x-2">
+          {/* Heading Controls */}
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={() => setSelectedFormatting({ 
+                ...selectedFormatting, 
+                fontSize: selectedFormatting.fontSize === '3xl' ? 'base' : '3xl',
+                bold: selectedFormatting.fontSize === '3xl' ? false : true
+              })}
+              className={`px-3 py-2 rounded text-sm font-medium transition-all ${
+                selectedFormatting.fontSize === '3xl' 
+                  ? 'bg-purple-500 text-white' 
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title="Heading 1"
+            >
+              H1
+            </button>
+            <button
+              onClick={() => setSelectedFormatting({ 
+                ...selectedFormatting, 
+                fontSize: selectedFormatting.fontSize === '2xl' ? 'base' : '2xl',
+                bold: selectedFormatting.fontSize === '2xl' ? false : true
+              })}
+              className={`px-3 py-2 rounded text-sm font-medium transition-all ${
+                selectedFormatting.fontSize === '2xl' 
+                  ? 'bg-purple-500 text-white' 
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title="Heading 2"
+            >
+              H2
+            </button>
+            <button
+              onClick={() => setSelectedFormatting({ 
+                ...selectedFormatting, 
+                fontSize: selectedFormatting.fontSize === 'xl' ? 'base' : 'xl',
+                bold: selectedFormatting.fontSize === 'xl' ? false : true
+              })}
+              className={`px-3 py-2 rounded text-sm font-medium transition-all ${
+                selectedFormatting.fontSize === 'xl' 
+                  ? 'bg-purple-500 text-white' 
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title="Heading 3"
+            >
+              H3
+            </button>
+          </div>
+          
+          {/* Indentation Controls */}
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={() => {
+                // Add indentation to the current text input if focused
+                const activeElement = document.activeElement as HTMLInputElement;
+                if (activeElement && activeElement.type === 'text') {
+                  const start = activeElement.selectionStart || 0;
+                  const end = activeElement.selectionEnd || 0;
+                  const selectedText = activeElement.value.substring(start, end);
+                  const lines = selectedText ? selectedText.split('\n') : [''];
+                  const indentedText = lines.map(line => `    ${line}`).join('\n');
+                  const newValue = activeElement.value.substring(0, start) + indentedText + activeElement.value.substring(end);
+                  activeElement.value = newValue;
+                  activeElement.setSelectionRange(start + indentedText.length, start + indentedText.length);
+                }
+              }}
+              className="px-3 py-2 rounded text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+              title="Increase Indentation"
+            >
+              Indent
+            </button>
+            {/* <button
+              onClick={() => {
+                // Remove indentation from the current text input if focused
+                const activeElement = document.activeElement as HTMLInputElement;
+                if (activeElement && activeElement.type === 'text') {
+                  const start = activeElement.selectionStart || 0;
+                  const end = activeElement.selectionEnd || 0;
+                  const selectedText = activeElement.value.substring(start, end);
+                  const lines = selectedText ? selectedText.split('\n') : [''];
+                  const unindentedText = lines.map(line => {
+                    // Remove up to 4 spaces from the beginning of each line
+                    return line.replace(/^    /, '');
+                  }).join('\n');
+                  const newValue = activeElement.value.substring(0, start) + unindentedText + activeElement.value.substring(end);
+                  activeElement.value = newValue;
+                  activeElement.setSelectionRange(start + unindentedText.length, start + unindentedText.length);
+                }
+              }}
+              className="px-3 py-2 rounded text-sm font-medium transition-all bg-gray-200 text-gray-700 hover:bg-gray-300"
+              title="Decrease Indentation"
+            >
+              Outdent
+            </button> */}
+          </div>
+          
+          <div className="flex items-center space-x-2">
             <label className="text-sm text-gray-600">Color:</label>
-            <input
-              type="color"
-              value={selectedFormatting.color}
-              onChange={(e) => setSelectedFormatting({ ...selectedFormatting, color: e.target.value })}
-              className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
-            />
-          </div> */}
+            <div className="flex gap-1">
+              <button
+                onClick={() => setSelectedFormatting({ ...selectedFormatting, color: '#000000' })}
+                className={`w-6 h-6 rounded border-2 transition-all ${
+                  selectedFormatting.color === '#000000'
+                    ? 'bg-black border-blue-500' 
+                    : 'bg-black border-gray-300 hover:border-gray-400'
+                }`}
+                title="Black"
+              />
+              <button
+                onClick={() => setSelectedFormatting({ ...selectedFormatting, color: '#ffffff' })}
+                className={`w-6 h-6 rounded border-2 transition-all ${
+                  selectedFormatting.color === '#ffffff'
+                    ? 'bg-white border-blue-500' 
+                    : 'bg-white border-gray-300 hover:border-gray-400'
+                }`}
+                title="White"
+              />
+              <button
+                onClick={() => setSelectedFormatting({ ...selectedFormatting, color: '#dc2626' })}
+                className={`w-6 h-6 rounded border-2 transition-all ${
+                  selectedFormatting.color === '#dc2626'
+                    ? 'bg-red-600 border-blue-500' 
+                    : 'bg-red-600 border-gray-300 hover:border-gray-400'
+                }`}
+                title="Red"
+              />
+              <button
+                onClick={() => setSelectedFormatting({ ...selectedFormatting, color: '#6b7280' })}
+                className={`w-6 h-6 rounded border-2 transition-all ${
+                  selectedFormatting.color === '#6b7280'
+                    ? 'bg-gray-500 border-blue-500' 
+                    : 'bg-gray-500 border-gray-300 hover:border-gray-400'
+                }`}
+                title="Gray"
+              />
+              <button
+                onClick={() => setSelectedFormatting({ ...selectedFormatting, color: undefined })}
+                className={`px-2 py-1 text-xs rounded border transition-all ${
+                  !selectedFormatting.color
+                    ? 'bg-blue-500 text-white border-blue-500' 
+                    : 'bg-gray-200 text-gray-700 border-gray-300 hover:bg-gray-300'
+                }`}
+                title="Default"
+              >
+                D
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

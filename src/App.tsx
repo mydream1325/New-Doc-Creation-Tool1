@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, Header, Footer, ImageRun } from 'docx';
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, Header, Footer, ImageRun, HeadingLevel } from 'docx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-
+import mammoth from 'mammoth';
+import html2pdf from 'html2pdf.js';
 import { WizardProgress } from './components/WizardProgress';
 import { DocumentTypeSelector } from './components/DocumentTypeSelector';
 import { ProjectInfoForm } from './components/ProjectInfoForm';
@@ -17,11 +18,11 @@ const formatDate = (dateString: string): string => {
   if (!dateString) return '';
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return '';
-  
+
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   const year = date.getFullYear();
-  
+
   return `${month}/${day}/${year}`;
 };
 
@@ -40,11 +41,11 @@ const convertFormattedContentToTextRuns = (formattedContent: FormattedContent[] 
 
   return formattedContent.map((item) => {
     const textRunOptions: any = { text: item.text };
-    
+
     if (item.style?.bold) textRunOptions.bold = true;
     if (item.style?.italic) textRunOptions.italics = true;
     if (item.style?.underline) textRunOptions.underline = {};
-    // if (item.style?.color) textRunOptions.color = item.style.color;
+    if (item.style?.color) textRunOptions.color = item.style.color;
     if (item.style?.fontFamily) textRunOptions.font = item.style.fontFamily;
     if (item.style?.fontSize) {
       // Convert fontSize to docx size (in half-points)
@@ -59,7 +60,7 @@ const convertFormattedContentToTextRuns = (formattedContent: FormattedContent[] 
       };
       textRunOptions.size = sizeMap[item.style.fontSize] || 24;
     }
-    
+
     return new TextRun(textRunOptions);
   });
 };
@@ -72,15 +73,52 @@ const convertFormattedContentToHTML = (formattedContent: FormattedContent[] | un
 
   return formattedContent.map((item) => {
     let html = item.text;
-    
-    if (item.style?.bold) html = `<strong>${html}</strong>`;
-    if (item.style?.italic) html = `<em>${html}</em>`;
-    if (item.style?.underline) html = `<u>${html}</u>`;
-    
-    if (item.style?.fontSize || item.style?.fontFamily) {
+
+    // Process text content with line breaks and lists
+    const lines = html.split('\n');
+    const processedLines = lines.map((line) => {
+      let processedLine = line;
+
+      if (item.style?.bold) processedLine = `<strong>${processedLine}</strong>`;
+      if (item.style?.italic) processedLine = `<em>${processedLine}</em>`;
+      if (item.style?.underline) processedLine = `<u>${processedLine}</u>`;
+
+      // Handle bulleted lists
+      if (line.trim().startsWith('•')) {
+        processedLine = `<li>${line.trim().substring(1).trim()}</li>`;
+      }
+      // Handle numbered lists
+      else if (/^\d+\./.test(line.trim())) {
+        const match = line.trim().match(/^(\d+)\.\s*(.*)/);
+        if (match) {
+          processedLine = `<li>${match[2]}</li>`;
+        }
+      }
+      // Handle empty lines
+      else if (line.trim() === '') {
+        processedLine = '<br/>';
+      }
+
+      return processedLine;
+    });
+
+    html = processedLines.join('');
+
+    // Wrap in appropriate list tags if content contains list items
+    if (html.includes('<li>')) {
+      // Check if it's a numbered list (contains numbers followed by dots)
+      const hasNumberedItems = /\d+\./.test(item.text);
+      if (hasNumberedItems) {
+        html = `<ol>${html}</ol>`;
+      } else {
+        html = `<ul>${html}</ul>`;
+      }
+    }
+
+    if (item.style?.fontSize || item.style?.fontFamily || item.style?.color) {
       const style = [] as string[];
-      // Note: color property is not available in the current interface
       if (item.style?.fontFamily) style.push(`font-family: ${item.style.fontFamily}`);
+      if (item.style?.color) style.push(`color: ${item.style.color}`);
       if (item.style?.fontSize) {
         const sizeMap: { [key: string]: string } = {
           'xs': '0.75rem',
@@ -95,7 +133,7 @@ const convertFormattedContentToHTML = (formattedContent: FormattedContent[] | un
       }
       html = `<span style="${style.join('; ')}">${html}</span>`;
     }
-    
+
     return html;
   }).join('');
 };
@@ -108,12 +146,22 @@ const convertFormattedContentToPlainText = (formattedContent: FormattedContent[]
 
   return formattedContent.map((item) => {
     let text = item.text;
-    
-    // Add formatting indicators for plain text
-    if (item.style?.bold) text = `**${text}**`;
-    if (item.style?.italic) text = `*${text}*`;
-    if (item.style?.underline) text = `_${text}_`;
-    
+
+    // Process text content with line breaks and lists
+    const lines = text.split('\n');
+    const processedLines = lines.map((line) => {
+      let processedLine = line;
+
+      // Add formatting indicators for plain text
+      if (item.style?.bold) processedLine = `**${processedLine}**`;
+      if (item.style?.italic) processedLine = `*${processedLine}*`;
+      if (item.style?.underline) processedLine = `_${processedLine}_`;
+
+      return processedLine;
+    });
+
+    text = processedLines.join('\n');
+
     return text;
   }).join('');
 };
@@ -123,7 +171,7 @@ const buildInlineStyleFromFormatting = (fmt?: TextFormatting): string => {
   if (!fmt) return '';
   const style: string[] = [];
   if (fmt.fontFamily) style.push(`font-family: ${fmt.fontFamily}`);
-  // if (fmt.color) style.push(`color: ${fmt.color}`);
+  if (fmt.color) style.push(`color: ${fmt.color}`);
   if (fmt.bold) style.push('font-weight: 700');
   if (fmt.italic) style.push('font-style: italic');
   if (fmt.underline) style.push('text-decoration: underline');
@@ -144,21 +192,119 @@ const buildInlineStyleFromFormatting = (fmt?: TextFormatting): string => {
 
 function App() {
   const [currentStep, setCurrentStep] = useState(0);
-  const [selectedDocumentType, setSelectedDocumentType] = useState('');
-  const [projectInfo, setProjectInfo] = useState<ProjectInfo>({
-    customerName: '',
-    projectName: '',
-    startDate: '',
-    projectOverview: '',
-    technicalOverview: '',
-    pricingTable: [],
-    hardwareComponents: [],
-    servicesComponents: [],
-    headerText: '',
-    footerText: ''
+  // Initialize selectedDocumentType from localStorage or fall back to empty string
+  const [selectedDocumentType, setSelectedDocumentType] = useState(() => {
+    const savedDocumentType = localStorage.getItem('documentTool_selectedDocumentType');
+    return savedDocumentType || '';
   });
-  const [textBlocks, setTextBlocks] = useState<TextBlock[]>(initialTextBlocks);
+  // Initialize projectInfo from localStorage or fall back to default values
+  const [projectInfo, setProjectInfo] = useState<ProjectInfo>(() => {
+    const savedProjectInfo = localStorage.getItem('documentTool_projectInfo');
+    if (savedProjectInfo) {
+      try {
+        return JSON.parse(savedProjectInfo);
+      } catch (error) {
+        console.error('Error parsing saved project info:', error);
+        return {
+          customerName: '',
+          projectName: '',
+          startDate: '',
+          projectOverview: '',
+          technicalOverview: '',
+          pricingTable: [],
+          hardwareComponents: [],
+          servicesComponents: [],
+          headerText: '',
+          footerText: ''
+        };
+      }
+    }
+    return {
+      customerName: '',
+      projectName: '',
+      startDate: '',
+      projectOverview: '',
+      pricingTable: [],
+      hardwareComponents: [],
+      servicesComponents: [],
+      headerText: '',
+      footerText: ''
+    };
+  });
+  // Initialize textBlocks from localStorage or fall back to initial data
+  const [textBlocks, setTextBlocks] = useState<TextBlock[]>(() => {
+    const savedBlocks = localStorage.getItem('documentTool_textBlocks');
+    if (savedBlocks) {
+      try {
+        return JSON.parse(savedBlocks);
+      } catch (error) {
+        console.error('Error parsing saved text blocks:', error);
+        return initialTextBlocks;
+      }
+    }
+    return initialTextBlocks;
+  });
   const [isExporting, setIsExporting] = useState(false);
+
+  // Wrapper function to update textBlocks and save to localStorage
+  const updateTextBlocks = (newBlocks: TextBlock[]) => {
+    setTextBlocks(newBlocks);
+    try {
+      localStorage.setItem('documentTool_textBlocks', JSON.stringify(newBlocks));
+    } catch (error) {
+      console.error('Error saving text blocks to localStorage:', error);
+    }
+  };
+
+  // Wrapper function to update projectInfo and save to localStorage
+  const updateProjectInfo = (newProjectInfo: ProjectInfo) => {
+    setProjectInfo(newProjectInfo);
+    try {
+      localStorage.setItem('documentTool_projectInfo', JSON.stringify(newProjectInfo));
+    } catch (error) {
+      console.error('Error saving project info to localStorage:', error);
+    }
+  };
+
+  // Wrapper function to update selectedDocumentType and save to localStorage
+  const updateSelectedDocumentType = (newDocumentType: string) => {
+    setSelectedDocumentType(newDocumentType);
+    try {
+      localStorage.setItem('documentTool_selectedDocumentType', newDocumentType);
+    } catch (error) {
+      console.error('Error saving selected document type to localStorage:', error);
+    }
+  };
+
+  // Function to clear all saved data and reset to initial state
+  const clearAllSavedData = () => {
+    try {
+      localStorage.removeItem('documentTool_textBlocks');
+      localStorage.removeItem('documentTool_projectInfo');
+      localStorage.removeItem('documentTool_selectedDocumentType');
+      
+      // Reset all state to initial values
+      setTextBlocks(initialTextBlocks);
+      setProjectInfo({
+        customerName: '',
+        projectName: '',
+        startDate: '',
+        projectOverview: '',
+        technicalOverview: '',
+        pricingTable: [],
+        hardwareComponents: [],
+        servicesComponents: [],
+        headerText: '',
+        footerText: ''
+      });
+      setSelectedDocumentType('');
+      setCurrentStep(0);
+      
+      console.log('All saved data cleared successfully');
+    } catch (error) {
+      console.error('Error clearing saved data:', error);
+    }
+  };
 
   const selectedBlocks = textBlocks.filter(block => block.isSelected);
 
@@ -183,14 +329,14 @@ function App() {
         const customerName = projectInfo.customerName || '';
         const projectName = projectInfo.projectName || '';
         const isValid = customerName.trim().length > 0 && projectName.trim().length > 0;
-        console.log('Validation check:', { 
-          customerName, 
-          projectName, 
-          customerNameTrimmed: customerName.trim(), 
+        console.log('Validation check:', {
+          customerName,
+          projectName,
+          customerNameTrimmed: customerName.trim(),
           projectNameTrimmed: projectName.trim(),
           customerNameLength: customerName.trim().length,
           projectNameLength: projectName.trim().length,
-          isValid 
+          isValid
         });
         return isValid;
       case 2:
@@ -221,6 +367,28 @@ ${projectInfo.startDate ? `**Start Date:** ${formatDate(projectInfo.startDate)}`
 ## Project Overview
 ${projectInfo.projectOverview || 'No project overview provided.'}
 
+## Pricing & Components
+${projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0 ? `
+${projectInfo.pricingTable.length > 0 ? `
+### Pricing Structure
+
+| Item | Quantity | Description | Price ($) | Extended Price ($) |
+|------|----------|-------------|-----------|-------------------|
+${projectInfo.pricingTable.map(item => `| ${item.item || 'N/A'} | ${item.quantity} | ${item.description || 'N/A'} | $${item.price.toFixed(2)} | $${item.extendedPrice.toFixed(2)} |`).join('\n')}
+| **Total** | | | | **$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}** |
+` : ''}
+${projectInfo.hardwareComponents.length > 0 ? `
+### Hardware Components
+
+${projectInfo.hardwareComponents.map(item => `${convertFormattedContentToPlainText([item])}`).join('\n\n')}
+` : ''}
+${projectInfo.servicesComponents.length > 0 ? `
+### Services Components
+
+${projectInfo.servicesComponents.map(item => `${convertFormattedContentToPlainText([item])}`).join('\n\n')}
+` : ''}
+` : 'No pricing or components information provided.'}
+
 ## Technical Overview
 ${projectInfo.technicalOverview || 'No technical overview provided.'}
 
@@ -240,38 +408,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
       });
     });
 
-    if (projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) {
-      content += `\n## Pricing & Components\n\n`;
-      
-      if (projectInfo.hardwareComponents.length > 0) {
-        content += `### Hardware Components\n\n`;
-        projectInfo.hardwareComponents.forEach(item => {
-          content += `${convertFormattedContentToPlainText([item])}\n`;
-        });
-        content += `\n`;
-      }
-      
-      if (projectInfo.servicesComponents.length > 0) {
-        content += `### Services Components\n\n`;
-        projectInfo.servicesComponents.forEach(item => {
-          content += `${convertFormattedContentToPlainText([item])}\n`;
-        });
-        content += `\n`;
-      }
-      
-      if (projectInfo.pricingTable.length > 0) {
-        content += `### Pricing Structure\n\n`;
-        content += `| Item | Quantity | Description | Price ($) | Extended Price ($) |\n`;
-        content += `|------|----------|-------------|-----------|-------------------|\n`;
-        
-        projectInfo.pricingTable.forEach(item => {
-          content += `| ${item.item || 'N/A'} | ${item.quantity} | ${item.description || 'N/A'} | $${item.price.toFixed(2)} | $${item.extendedPrice.toFixed(2)} |\n`;
-        });
-        
-        const total = projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0);
-        content += `| **Total** | | | | **$${total.toFixed(2)}** |\n\n`;
-      }
-    }
+
 
     content += `\n---\n\n*Generated on ${formatDate(new Date().toISOString().split('T')[0])}*`;
 
@@ -292,7 +429,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
 
   const handleExport = async (format: string) => {
     setIsExporting(true);
-    
+
     try {
       const content = generateDocumentContent();
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
@@ -304,8 +441,6 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
       switch (format) {
         case 'pdf':
           try {
-            console.log('Starting PDF generation...');
-            
             // Create a temporary div to render the document content
             const tempDiv = document.createElement('div');
             tempDiv.style.position = 'absolute';
@@ -317,27 +452,105 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             tempDiv.style.fontFamily = 'Arial, sans-serif';
             tempDiv.style.lineHeight = '1.6';
             tempDiv.style.color = 'black';
-            
+
+            // Get font family from first selected block for PDF table
+            const getTableFontFamily = () => {
+              if (selectedBlocks.length > 0) {
+                const firstBlock = selectedBlocks[0];
+                // Try to get font family from content formatting first, then title formatting
+                return firstBlock.contentFormatting?.fontFamily || 
+                       firstBlock.titleFormatting?.fontFamily || 
+                       'Arial';
+              }
+              return 'Arial';
+            };
+
+            const tableFontFamily = getTableFontFamily();
+
             // Build the HTML content for PDF - matching Word document format
             const htmlContent = `
-              <div style="margin-bottom: 20px; text-align: center;">
+              <div style="margin-bottom: 0px; text-align: center;">
                 ${projectInfo.customerLogo ? `
-                  <div style="margin-bottom: 15px;">
+                  <div style="margin-bottom: 0px;">
                     <img src="${URL.createObjectURL(projectInfo.customerLogo)}" alt="Customer Logo" style="max-width: 120px; max-height: 120px; object-fit: contain;" />
                   </div>
                 ` : ''}
-                <h1 style="color: #2563eb; margin: 0 0 15px 0; font-size: 24px; font-weight: bold;">${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
-                <p style="margin: 5px 0;">Customer: ${projectInfo.customerName || 'N/A'}</p>
-                <p style="margin: 5px 0;">Project: ${projectInfo.projectName || 'N/A'}</p>
-                ${projectInfo.startDate ? `<p style="margin: 5px 0;">Start Date: ${formatDate(projectInfo.startDate)}</p>` : ''}
+                <h1 style="color: #2563eb; margin: 0 0 0 0; font-size: 24px; font-weight: bold; text-align: left;">${selectedDocumentType.toUpperCase().replace('-', ' ')}</h1>
+                <p style="margin: 0 0; text-align: left;">Customer: ${projectInfo.customerName || 'N/A'}</p>
+                <p style="margin: 0 0; text-align: left;">Project: ${projectInfo.projectName || 'N/A'}</p>
+                ${projectInfo.startDate ? `<p style="margin: 0 0; text-align: left  ;">Start Date: ${formatDate(projectInfo.startDate)}</p>` : ''}
               </div>
 
-              <div style="margin-bottom: 20px;">
-                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Project Overview</h2>
+              <div style="margin-bottom: 0px;">
+                <h2 style="color: #1e40af; margin: 0 0 0 0; font-size: 18px; font-weight: bold;">Project Overview</h2>
                 <p style="margin: 5px 0;">${projectInfo.projectOverview || 'No project overview provided.'}</p>
               </div>
 
-              <div style="margin-bottom: 20px;">
+              ${(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) ? `
+              <div style="margin-bottom: 0px;">
+                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Pricing & Components</h2>
+                ${projectInfo.pricingTable.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Pricing Structure</h3>
+                  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; font-family: ${tableFontFamily}, sans-serif;">
+                    <thead>
+                      <tr style="background-color: #dc2626;">
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left; font-family: ${tableFontFamily}, sans-serif; color: white;">Item</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left; font-family: ${tableFontFamily}, sans-serif; color: white;">Quantity</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left; font-family: ${tableFontFamily}, sans-serif; color: white;">Description</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif; color: white;">Price ($)</th>
+                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif; color: white;">Extended Price ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${projectInfo.pricingTable.map(item => `
+                        <tr>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; font-family: ${tableFontFamily}, sans-serif;">${item.item || 'N/A'}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; font-family: ${tableFontFamily}, sans-serif;">${item.quantity}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; font-family: ${tableFontFamily}, sans-serif;">${item.description || 'N/A'}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif;">$${item.price.toFixed(2)}</td>
+                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif;">$${item.extendedPrice.toFixed(2)}</td>
+                        </tr>
+                      `).join('')}
+                      <tr style="background-color: #dc2626; font-weight: bold;">
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: left; font-family: ${tableFontFamily}, sans-serif; color: white;">Total:</td>
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; font-family: ${tableFontFamily}, sans-serif; color: white;"></td>
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; font-family: ${tableFontFamily}, sans-serif; color: white;"></td>
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif; color: white;"></td>
+                        <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right; font-family: ${tableFontFamily}, sans-serif; color: white;">$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                ` : ''}
+                ${projectInfo.hardwareComponents.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Hardware Components</h3>
+                  <div style="margin: 5px 0;">
+                    ${projectInfo.hardwareComponents.map(item => `
+                      <div style="margin: 2px 0;">
+                        ${convertFormattedContentToHTML([item])}
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                ` : ''}
+                ${projectInfo.servicesComponents.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Services Components</h3>
+                  <div style="margin: 5px 0;">
+                    ${projectInfo.servicesComponents.map(item => `
+                      <div style="margin: 2px 0;">
+                        ${convertFormattedContentToHTML([item])}
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                ` : ''}
+              </div>
+              ` : ''}
+
+              <div style="margin-bottom: 0px;">
                 <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Technical Overview</h2>
                 <p style="margin: 5px 0;">${projectInfo.technicalOverview || 'No technical overview provided.'}</p>
               </div>
@@ -351,260 +564,411 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
                   ? convertFormattedContentToHTML(block.formattedContent)
                   : block.content.replace(/\n/g, '<br>');
                 return `
-                <div style="margin-bottom: 15px;">
-                  <p style="margin: 5px 0;"><span style="${titleStyle}">${index + 1}. ${block.title}</span></p>
+                <div style="margin-bottom: 0px;">
+                  <p style="margin: 5px 0;"><span style="${titleStyle}">${block.title}</span></p>
                   ${headerHTML}
                   <p style="margin: 5px 0; ${contentStyle}">${contentHTML}</p>
                   ${footerHTML}
                 </div>`;
               }).join('')}
 
-              ${(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) ? `
-              <div style="margin-bottom: 20px;">
-                <h2 style="color: #1e40af; margin: 20px 0 10px 0; font-size: 18px; font-weight: bold;">Pricing & Components</h2>
-                ${projectInfo.hardwareComponents.length > 0 ? `
-                <div style="margin-bottom: 15px;">
-                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Hardware Components</h3>
-                  <div style="margin: 5px 0;">
-                    ${projectInfo.hardwareComponents.map(item => `
-                      <div style="margin: 2px 0;">
-                        • ${convertFormattedContentToHTML([item])}
-                      </div>
-                    `).join('')}
-                  </div>
-                </div>
-                ` : ''}
-                ${projectInfo.servicesComponents.length > 0 ? `
-                <div style="margin-bottom: 15px;">
-                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Services Components</h3>
-                  <div style="margin: 5px 0;">
-                    ${projectInfo.servicesComponents.map(item => `
-                      <div style="margin: 2px 0;">
-                        • ${convertFormattedContentToHTML([item])}
-                      </div>
-                    `).join('')}
-                  </div>
-                </div>
-                ` : ''}
-                ${projectInfo.pricingTable.length > 0 ? `
-                <div style="margin-bottom: 15px;">
-                  <h3 style="margin: 10px 0 5px 0; font-size: 16px; font-weight: bold;">Pricing Structure</h3>
-                  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
-                    <thead>
-                      <tr style="background-color: #f8fafc;">
-                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Item</th>
-                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Qty</th>
-                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: left;">Description</th>
-                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Price ($)</th>
-                        <th style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Extended ($)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${projectInfo.pricingTable.map(item => `
-                        <tr>
-                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.item || 'N/A'}</td>
-                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.quantity}</td>
-                          <td style="border: 1px solid #e2e8f0; padding: 6px;">${item.description || 'N/A'}</td>
-                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${item.price.toFixed(2)}</td>
-                          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${item.extendedPrice.toFixed(2)}</td>
-                        </tr>
-                      `).join('')}
-                      <tr style="background-color: #f8fafc; font-weight: bold;">
-                        <td colspan="4" style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">Total:</td>
-                        <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: right;">$${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                ` : ''}
-              </div>
-              ` : ''}
-
               <div style="text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 12px;">
-                <p style="margin: 0;"><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
+                <p style="margin-bottom: 20px;"><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
               </div>
             `;
+            // Step 3: Create a hidden container to render the HTML
+            // const container = document.createElement('div');
+            // container.style.position = 'absolute';
+            // container.style.left = '-9999px';
+            // container.style.top = '-9999px';
+            // container.style.width = '210mm'; // Approximate A4 width
+            // container.innerHTML = htmlContent;
+            const fileName = "data.docx"
+            // Step 4: Use html2pdf to convert HTML to PDF and get Blob
+            const pdfBlob = await html2pdf()
+              .set({
+                margin: 15,
+                filename: fileName.replace(/\.docx$/i, '.pdf'),
+                html2canvas: {
+                  scale: 2,
+                },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['avoid-all', 'css'], avoid: ['tr', 'h2', 'h3', 'div', 'p'] }
+              })
+              .from(htmlContent)
+              .toPdf()
+              .save();
+            console.log("here!!!", pdfBlob);
+
+            // Step 5: Clean up the hidden HTML container
+
+            // Step 6: Trigger download of the PDF Blob
+            const Bloburl = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.href = Bloburl;
+            a.download = fileName.replace(/\.docx$/i, '.pdf');
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(Bloburl);
+
+            // console.log('Starting PDF generation...');
+
             
-            tempDiv.innerHTML = htmlContent;
-            document.body.appendChild(tempDiv);
-            
-            // Convert HTML to canvas, then to PDF
-            const canvas = await html2canvas(tempDiv, {
-              scale: 2,
-              useCORS: true,
-              allowTaint: true,
-              backgroundColor: '#ffffff',
-              width: 800,
-              height: tempDiv.scrollHeight
-            });
-            
-            // Remove the temporary div
-            document.body.removeChild(tempDiv);
-            
-            // Create PDF
-            const imgData = canvas.toDataURL('image/png');
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = pdf.internal.pageSize.getHeight();
-            const imgWidth = pdfWidth - 20; // 10mm margin on each side
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            
-            let heightLeft = imgHeight;
-            let position = 10; // 10mm top margin
-            
-            // Add first page
-            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-            heightLeft -= (pdfHeight - 20); // Account for margins
-            
-            // Add additional pages if needed
-            while (heightLeft >= 0) {
-              position = heightLeft - imgHeight + 10;
-              pdf.addPage();
-              pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-              heightLeft -= (pdfHeight - 20);
-            }
-            
-            // Save the PDF
-            pdf.save(`${baseFilename}.pdf`);
-            console.log('PDF generated successfully');
-            
-          } catch (error) {
-            console.error('Error generating PDF:', error);
-            alert('Error generating PDF. Please try again.');
+
+            // tempDiv.innerHTML = htmlContent;
+            // document.body.appendChild(tempDiv);
+
+            // // Create PDF with proper pagination
+            // const pdf = new jsPDF('p', 'mm', 'a4');
+            // const pdfWidth = pdf.internal.pageSize.getWidth();
+            // const pdfHeight = pdf.internal.pageSize.getHeight();
+            // const margin = 20; // 10mm margin on each side
+            // const contentWidth = pdfWidth - margin;
+            // const contentHeight = pdfHeight - margin;
+
+            // // Use html2canvas with improved pagination that preserves all styling and images
+            // const canvas = await html2canvas(tempDiv, {
+            //   scale: 2,
+            //   useCORS: true,
+            //   allowTaint: true,
+            //   backgroundColor: '#ffffff',
+            //   width: 800,
+            //   height: tempDiv.scrollHeight,
+            //   logging: false,
+            //   removeContainer: true,
+            //   foreignObjectRendering: false,
+            //   imageTimeout: 0
+            // });
+
+            // // Calculate dimensions
+            // const scale = contentWidth / 800; // 800px is the HTML width
+            // const imgWidth = contentWidth;
+            // const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            // // Calculate how many pages we need
+            // let pagesNeeded = Math.ceil(imgHeight / contentHeight);
+            // if (pagesNeeded <= 0) pagesNeeded = 1;
+
+            // console.log('Content dimensions:', {
+            //   originalHeight: tempDiv.scrollHeight,
+            //   canvasHeight: canvas.height,
+            //   imgHeight,
+            //   contentHeight,
+            //   pagesNeeded
+            // });
+
+            // // Generate each page by slicing the canvas with improved precision
+            // for (let pageNum = 0; pageNum < pagesNeeded; pageNum++) {
+            //   console.log(`Generating page ${pageNum + 1} of ${pagesNeeded}`);
+
+            //   // Add new page if not the first page
+            //   if (pageNum > 0) {
+            //     pdf.addPage();
+            //   }
+
+            //   // Calculate the exact slice of the canvas for this page
+            //   const startY = Math.floor(pageNum * (contentHeight / scale));
+            //   const endY = Math.floor(Math.min((pageNum + 1) * (contentHeight / scale), canvas.height));
+            //   const sliceHeight = endY - startY;
+
+            //   console.log(`Page ${pageNum + 1} slice: startY=${startY}, endY=${endY}, sliceHeight=${sliceHeight}`);
+
+            //   // Ensure we have valid dimensions
+            //   if (sliceHeight <= 0) {
+            //     console.warn(`Page ${pageNum + 1} has invalid height: ${sliceHeight}`);
+            //     continue;
+            //   }
+
+            //   // Create a temporary canvas for this page slice
+            //   const sliceCanvas = document.createElement('canvas');
+            //   const sliceCtx = sliceCanvas.getContext('2d');
+            //   if (!sliceCtx) {
+            //     throw new Error('Failed to get canvas context');
+            //   }
+
+            //   // Set canvas dimensions
+            //   sliceCanvas.width = canvas.width;
+            //   sliceCanvas.height = sliceHeight;
+
+            //   // Clear the canvas
+            //   sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+
+            //   // Draw the slice of the original canvas
+            //   sliceCtx.drawImage(
+            //     canvas,
+            //     0, startY, canvas.width, sliceHeight,  // Source rectangle
+            //     0, 0, canvas.width, sliceHeight        // Destination rectangle
+            //   );
+
+            //   // Convert slice to image data
+            //   const sliceImgData = sliceCanvas.toDataURL('image/png');
+
+            //   // Calculate dimensions for PDF
+            //   const pageImgWidth = contentWidth;
+            //   const pageImgHeight = (sliceHeight * pageImgWidth) / canvas.width;
+
+            //   // Add the slice to the PDF with proper positioning
+            //   pdf.addImage(sliceImgData, 'PNG', margin/2, margin/2, pageImgWidth, pageImgHeight);
+            // }
+
+            // // Remove the temporary div
+            // document.body.removeChild(tempDiv);
+
+            // // Save the PDF
+            // pdf.save(`${baseFilename}.pdf`);
+            // console.log('PDF generated successfully');
+
+          } catch (docxError) {
           }
           break;
 
         case 'docx':
           try {
             console.log('Starting DOCX generation...');
-            
+
             // Create paragraphs array
             const paragraphs = [];
-            
-            // Title
+
+            // Title - H1 Heading
             paragraphs.push(new Paragraph({
-              children: [new TextRun({ text: selectedDocumentType.toUpperCase().replace('-', ' '), bold: true })]
+              text: selectedDocumentType.toUpperCase().replace('-', ' '),
+              heading: HeadingLevel.HEADING_1,
+              spacing: {
+                after: 200,
+                before: 200
+              }
             }));
-            
-            // Customer Logo (if available)
-            if (projectInfo.customerLogo) {
-              console.log('Customer logo found:', projectInfo.customerLogo.name, projectInfo.customerLogo.type, projectInfo.customerLogo.size);
-              
-              // Check if the image format is supported
-              const supportedFormats = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'];
-              if (!supportedFormats.includes(projectInfo.customerLogo.type)) {
-                console.warn('Unsupported image format:', projectInfo.customerLogo.type);
-              }
-              
-              try {
-                // Convert the logo file to Uint8Array for embedding
-                const arrayBuffer = await projectInfo.customerLogo.arrayBuffer();
-                const uint8Array = new Uint8Array(arrayBuffer);
-                console.log('Logo converted to Uint8Array, size:', uint8Array.length);
-                
-                // Create image element to get dimensions
-                const img = new Image();
-                const imgPromise = new Promise<void>((resolve, reject) => {
-                  img.onload = () => resolve();
-                  img.onerror = () => reject(new Error('Failed to load image'));
-                });
-                
-                img.src = URL.createObjectURL(projectInfo.customerLogo);
-                await imgPromise;
-                
-                // Calculate aspect ratio to maintain proportions
-                const aspectRatio = img.width / img.height;
-                const maxWidth = 200;
-                const maxHeight = 200;
-                let width = maxWidth;
-                let height = maxHeight;
-                
-                if (aspectRatio > 1) {
-                  // Landscape image
-                  height = maxWidth / aspectRatio;
-                } else {
-                  // Portrait image
-                  width = maxHeight * aspectRatio;
-                }
-                
-                // Add the image to the document
-                const imageParagraph = new Paragraph({
-                  children: [
-                    new ImageRun({
-                      data: uint8Array,
-                      transformation: {
-                        width: Math.round(width),
-                        height: Math.round(height),
-                      }
-                    }),
-                  ],
-                  alignment: AlignmentType.CENTER,
-                });
-                paragraphs.push(imageParagraph);
-                console.log('Logo paragraph added to document with dimensions:', width, 'x', height);
-                
-                // Clean up the object URL
-                URL.revokeObjectURL(img.src);
-              } catch (error) {
-                console.error('Could not embed customer logo in DOCX:', error);
-                console.error('Error details:', error);
-                
-                // Add a text-based fallback indicating the logo was included
-                paragraphs.push(new Paragraph({
-                  children: [new TextRun({ 
-                    text: `[Customer Logo: ${projectInfo.customerLogo.name}]`, 
-                    bold: true,
-                    color: '666666'
-                  })],
-                  alignment: AlignmentType.CENTER,
-                }));
-                console.log('Added text fallback for logo');
-              }
-            } else {
-              console.log('No customer logo found');
-            }
-            
+
+            // Customer Logo is now handled in the header
+            console.log('Customer logo will be added to header if available');
+
             // Customer and Project info
             paragraphs.push(new Paragraph({
               children: [new TextRun({ text: `Customer: ${projectInfo.customerName || 'N/A'}` })]
             }));
-            
+
             paragraphs.push(new Paragraph({
               children: [new TextRun({ text: `Project: ${projectInfo.projectName || 'N/A'}` })]
             }));
-            
-            // Project Overview
+
+            // Project Overview - H2 Heading
             paragraphs.push(new Paragraph({
-              children: [new TextRun({ text: "Project Overview", bold: true })]
+              text: "Project Overview",
+              heading: HeadingLevel.HEADING_2,
+              spacing: {
+                after: 200,
+                before: 400
+              }
             }));
             paragraphs.push(new Paragraph({
               children: [new TextRun({ text: projectInfo.projectOverview || 'No project overview provided.' })]
             }));
-            
-            // Technical Overview
+
+            // Pricing & Components - H2 Heading
+            if (projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) {
+              paragraphs.push(new Paragraph({
+                text: "Pricing & Components",
+                heading: HeadingLevel.HEADING_2,
+                spacing: {
+                  after: 200,
+                  before: 400
+                }
+              }));
+
+              // Pricing Structure
+              if (projectInfo.pricingTable.length > 0) {
+                paragraphs.push(new Paragraph({
+                  text: "Pricing Structure",
+                  heading: HeadingLevel.HEADING_3,
+                  spacing: {
+                    after: 200,
+                    before: 300
+                  }
+                }));
+
+                // Get font family from first selected block
+                const getTableFontFamily = () => {
+                  if (selectedBlocks.length > 0) {
+                    const firstBlock = selectedBlocks[0];
+                    // Try to get font family from content formatting first, then title formatting
+                    return firstBlock.contentFormatting?.fontFamily ||
+                      firstBlock.titleFormatting?.fontFamily ||
+                      'Arial';
+                  }
+                  return 'Arial';
+                };
+
+                const tableFontFamily = getTableFontFamily();
+
+                // Create pricing table
+                const tableRows = [];
+
+                // Header row
+                const headerRow = new TableRow({
+                  children: [
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Item", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Quantity", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Description", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Price ($)", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Extended Price ($)", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    })
+                  ]
+                });
+                tableRows.push(headerRow);
+
+                // Data rows
+                projectInfo.pricingTable.forEach(item => {
+                  const dataRow = new TableRow({
+                    children: [
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.item || 'N/A', font: tableFontFamily })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.quantity.toString(), font: tableFontFamily })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.description || 'N/A', font: tableFontFamily })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `$${item.price.toFixed(2)}`, font: tableFontFamily })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `$${item.extendedPrice.toFixed(2)}`, font: tableFontFamily })] })] })
+                    ]
+                  });
+                  tableRows.push(dataRow);
+                });
+
+                // Total row
+                const total = projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0);
+                const totalRow = new TableRow({
+                  children: [
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "", font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "", font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: "", font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    }),
+                    new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: `$${total.toFixed(2)}`, bold: true, font: tableFontFamily, color: "FFFFFF" })] })],
+                      shading: { fill: "DC2626" }
+                    })
+                  ]
+                });
+                tableRows.push(totalRow);
+
+                const pricingTable = new Table({
+                  rows: tableRows,
+                  width: {
+                    size: 100,
+                    type: WidthType.PERCENTAGE,
+                  },
+                });
+
+                paragraphs.push(pricingTable);
+              }
+
+              // Hardware Components
+              if (projectInfo.hardwareComponents.length > 0) {
+                paragraphs.push(new Paragraph({
+                  text: "Hardware Components",
+                  heading: HeadingLevel.HEADING_3,
+                  spacing: {
+                    after: 200,
+                    before: 300
+                  }
+                }));
+                projectInfo.hardwareComponents.forEach(item => {
+                  const textRuns = convertFormattedContentToTextRuns([item]);
+                  paragraphs.push(new Paragraph({
+                    children: textRuns
+                  }));
+                });
+              }
+
+              // Services Components
+              if (projectInfo.servicesComponents.length > 0) {
+                paragraphs.push(new Paragraph({
+                  text: "Services Components",
+                  heading: HeadingLevel.HEADING_3,
+                  spacing: {
+                    after: 200,
+                    before: 300
+                  }
+                }));
+                projectInfo.servicesComponents.forEach(item => {
+                  const textRuns = convertFormattedContentToTextRuns([item]);
+                  paragraphs.push(new Paragraph({
+                    children: textRuns
+                  }));
+                });
+              }
+            }
+
+            // Technical Overview - H2 Heading
             paragraphs.push(new Paragraph({
-              children: [new TextRun({ text: "Technical Overview", bold: true })]
+              text: "Technical Overview",
+              heading: HeadingLevel.HEADING_2,
+              spacing: {
+                after: 200,
+                before: 400
+              }
             }));
             paragraphs.push(new Paragraph({
               children: [new TextRun({ text: projectInfo.technicalOverview || 'No technical overview provided.' })]
             }));
-            
+
+            // Content Blocks Section - H2 Heading
+            if (selectedBlocks.length > 0) {
+              paragraphs.push(new Paragraph({
+                text: "Content Sections",
+                heading: HeadingLevel.HEADING_2,
+                spacing: {
+                  after: 200,
+                  before: 400
+                }
+              }));
+            }
+
             // Content Blocks
             selectedBlocks.forEach((block, index) => {
-              // Title with formatting
-              const titleRuns: TextRun[] = [new TextRun({ text: `${index + 1}. ` })];
+              // Title with H3 Heading and formatting
+              const titleRuns: TextRun[] = [];
               const titleOptions: any = { text: block.title };
               if (block.titleFormatting?.bold) titleOptions.bold = true;
               if (block.titleFormatting?.italic) titleOptions.italics = true;
               if (block.titleFormatting?.underline) titleOptions.underline = {};
-              // if (block.titleFormatting?.color) titleOptions.color = block.titleFormatting.color;  
+              if (block.titleFormatting?.color) titleOptions.color = block.titleFormatting.color;
               if (block.titleFormatting?.fontFamily) titleOptions.font = block.titleFormatting.fontFamily;
               if (block.titleFormatting?.fontSize) {
                 const sizeMap: { [key: string]: number } = { xs: 16, sm: 20, base: 24, lg: 28, xl: 32, '2xl': 36, '3xl': 40 };
                 titleOptions.size = sizeMap[block.titleFormatting.fontSize] || 24;
               }
               titleRuns.push(new TextRun(titleOptions));
-              paragraphs.push(new Paragraph({ children: titleRuns }));
+              paragraphs.push(new Paragraph({ 
+                children: titleRuns,
+                heading: HeadingLevel.HEADING_3,
+                spacing: {
+                  after: 200,
+                  before: 300
+                }
+              }));
 
               // Header options
               if (block.headerOptions && block.headerOptions.some(opt => opt)) {
@@ -623,7 +987,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
                 if (block.contentFormatting?.bold) contentOptions.bold = true;
                 if (block.contentFormatting?.italic) contentOptions.italics = true;
                 if (block.contentFormatting?.underline) contentOptions.underline = {};
-                // if (block.contentFormatting?.color) contentOptions.color = block.contentFormatting.color;
+                if (block.contentFormatting?.color) contentOptions.color = block.contentFormatting.color;
                 if (block.contentFormatting?.fontFamily) contentOptions.font = block.contentFormatting.fontFamily;
                 if (block.contentFormatting?.fontSize) {
                   const sizeMap: { [key: string]: number } = { xs: 16, sm: 20, base: 24, lg: 28, xl: 32, '2xl': 36, '3xl': 40 };
@@ -639,101 +1003,87 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
                 }));
               }
             });
+
+
+
+            // // Footer
+            // paragraphs.push(new Paragraph({
+            //   children: [new TextRun({ text: `Generated on ${formatDate(new Date().toISOString().split('T')[0])}`, italics: true })]
+            // }));
+
+            // Create header with logo and text
+            let headerChildren = [];
             
-            // Pricing Components
-            if (projectInfo.hardwareComponents.length > 0) {
-              paragraphs.push(new Paragraph({
-                children: [new TextRun({ text: "Hardware Components", bold: true })]
-              }));
-              projectInfo.hardwareComponents.forEach(item => {
-                const textRuns = convertFormattedContentToTextRuns([item]);
-                paragraphs.push(new Paragraph({
-                  children: textRuns
-                }));
-              });
-            }
-            
-            if (projectInfo.servicesComponents.length > 0) {
-              paragraphs.push(new Paragraph({
-                children: [new TextRun({ text: "Services Components", bold: true })]
-              }));
-              projectInfo.servicesComponents.forEach(item => {
-                const textRuns = convertFormattedContentToTextRuns([item]);
-                paragraphs.push(new Paragraph({
-                  children: textRuns
-                }));
-              });
-            }
-            
-            if (projectInfo.pricingTable.length > 0) {
-              paragraphs.push(new Paragraph({
-                children: [new TextRun({ text: "Pricing Structure", bold: true })]
-              }));
-              
-              // Create pricing table
-              const tableRows = [];
-              
-              // Header row
-              const headerRow = new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Item", bold: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Quantity", bold: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Description", bold: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Price ($)", bold: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Extended Price ($)", bold: true })] })] })
-                ]
-              });
-              tableRows.push(headerRow);
-              
-              // Data rows
-              projectInfo.pricingTable.forEach(item => {
-                const dataRow = new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.item || 'N/A' })] })] }),
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.quantity.toString() })] })] }),
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.description || 'N/A' })] })] }),
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `$${item.price.toFixed(2)}` })] })] }),
-                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `$${item.extendedPrice.toFixed(2)}` })] })] })
-                  ]
+            // Add logo to header if available
+            if (projectInfo.customerLogo) {
+              try {
+                const arrayBuffer = await projectInfo.customerLogo.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                // Create image element to get dimensions
+                const img = new Image();
+                const imgPromise = new Promise<void>((resolve, reject) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => reject(new Error('Failed to load image'));
                 });
-                tableRows.push(dataRow);
-              });
-              
-              // Total row
-              const total = projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0);
-              const totalRow = new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "" })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "" })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "" })] })] }),
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `$${total.toFixed(2)}`, bold: true })] })] })
-                ]
-              });
-              tableRows.push(totalRow);
-              
-              const pricingTable = new Table({
-                rows: tableRows,
-                width: {
-                  size: 100,
-                  type: WidthType.PERCENTAGE,
-                },
-              });
-              
-              paragraphs.push(pricingTable);
+
+                img.src = URL.createObjectURL(projectInfo.customerLogo);
+                await imgPromise;
+
+                // Calculate dimensions for header logo (smaller than body logo)
+                const aspectRatio = img.width / img.height;
+                const maxWidth = 100; // Smaller for header
+                const maxHeight = 50;  // Smaller for header
+                let width = maxWidth;
+                let height = maxHeight;
+
+                if (aspectRatio > 1) {
+                  // Landscape image
+                  height = maxWidth / aspectRatio;
+                } else {
+                  // Portrait image
+                  width = maxHeight * aspectRatio;
+                }
+
+                // Create header paragraph with logo
+                const headerLogoParagraph = new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: uint8Array,
+                      transformation: {
+                        width: Math.round(width),
+                        height: Math.round(height),
+                      }
+                    }),
+                  ],
+                  alignment: AlignmentType.LEFT,
+                });
+                
+                headerChildren.push(headerLogoParagraph);
+                console.log('Logo added to header with dimensions:', width, 'x', height);
+                
+                // Clean up the object URL
+                URL.revokeObjectURL(img.src);
+              } catch (error) {
+                console.error('Could not embed customer logo in header:', error);
+              }
             }
             
-            // Footer
-            paragraphs.push(new Paragraph({
-              children: [new TextRun({ text: `Generated on ${formatDate(new Date().toISOString().split('T')[0])}`, italics: true })]
-            }));
+            // Add header text if available
+            if (projectInfo.headerText) {
+              const headerTextParagraph = new Paragraph({
+                children: [new TextRun({ text: projectInfo.headerText, size: 18, color: '666666' })],
+                alignment: AlignmentType.RIGHT,
+              });
+              headerChildren.push(headerTextParagraph);
+            }
             
             // Create document with header/footer if provided
             const doc = new Document({
               sections: [{
                 properties: {},
-                headers: projectInfo.headerText ? { default: new Header({ children: [new Paragraph({ children: [new TextRun({ text: projectInfo.headerText, size: 18, color: '666666' })] })] }) } : undefined,
-                footers: projectInfo.footerText ? { default: new Footer({ children: [new Paragraph({ children: [new TextRun({ text: projectInfo.footerText, size: 18, color: '666666' })] })] }) } : undefined,
+                headers: headerChildren.length > 0 ? { default: new Header({ children: headerChildren }) } : undefined,
+                // footers: projectInfo.footerText ? { default: new Footer({ children: [new Paragraph({ children: [new TextRun({ text: `Generated on ${formatDate(new Date().toISOString().split('T')[0])}`, size: 18, color: '666666' })] })] }) } : undefined,
                 children: paragraphs
               }]
             });
@@ -745,7 +1095,7 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             });
             const blob = await Packer.toBlob(doc);
             console.log('DOCX blob created, size:', blob.size);
-            
+
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
@@ -754,12 +1104,12 @@ ${projectInfo.technicalOverview || 'No technical overview provided.'}
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
-            
+
             console.log('DOCX file downloaded successfully');
           } catch (docxError) {
             console.error('DOCX generation error:', docxError);
             console.error('Error details:', (docxError as Error).message, (docxError as Error).stack);
-            
+
             // Create a simple text file as fallback
             const textContent = `
 ${selectedDocumentType.toUpperCase().replace('-', ' ')}
@@ -770,29 +1120,119 @@ Project: ${projectInfo.projectName || 'N/A'}
 PROJECT OVERVIEW
 ${projectInfo.projectOverview || 'No project overview provided.'}
 
+PRICING & COMPONENTS
+${projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0 ? `
+${projectInfo.pricingTable.length > 0 ? `
+Pricing Structure
+${projectInfo.pricingTable.map(item => `${item.item || 'N/A'} | ${item.quantity} | ${item.description || 'N/A'} | $${item.price.toFixed(2)} | $${item.extendedPrice.toFixed(2)}`).join('\n')}
+Total: $${projectInfo.pricingTable.reduce((sum, item) => sum + item.extendedPrice, 0).toFixed(2)}
+` : ''}
+${projectInfo.hardwareComponents.length > 0 ? `
+Hardware Components
+${projectInfo.hardwareComponents.map(item => item.text).join('\n')}
+` : ''}
+${projectInfo.servicesComponents.length > 0 ? `
+Services Components
+${projectInfo.servicesComponents.map(item => item.text).join('\n')}
+` : ''}
+` : 'No pricing or components information provided.'}
+
 TECHNICAL OVERVIEW
 ${projectInfo.technicalOverview || 'No technical overview provided.'}
 
 CONTENT BLOCKS
 ${selectedBlocks.map((block, index) => `
-${index + 1}. ${block.title}
+${block.title}
 ${block.headerOptions && block.headerOptions.some(opt => opt) ? `Header: ${block.headerOptions.filter(Boolean).join(' | ')}` : ''}
-${block.formattedContent && block.formattedContent.length > 0 
-  ? block.formattedContent.map(item => item.text).join('')
-  : block.content}
+${block.formattedContent && block.formattedContent.length > 0
+                ? block.formattedContent.map(item => item.text).join('')
+                : block.content}
 ${block.footerOptions && block.footerOptions.some(opt => opt) ? `Footer: ${block.footerOptions.filter(Boolean).join(' | ')}` : ''}
 `).join('\n')}
 
 Generated on ${formatDate(new Date().toISOString().split('T')[0])}
 `;
 
-            // Create a simple DOCX as fallback
+            // Create header with logo for fallback document
+            let fallbackHeaderChildren = [];
+            
+            // Add logo to fallback header if available
+            if (projectInfo.customerLogo) {
+              try {
+                const arrayBuffer = await projectInfo.customerLogo.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                // Create image element to get dimensions
+                const img = new Image();
+                const imgPromise = new Promise<void>((resolve, reject) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => reject(new Error('Failed to load image'));
+                });
+
+                img.src = URL.createObjectURL(projectInfo.customerLogo);
+                await imgPromise;
+
+                // Calculate dimensions for header logo (smaller than body logo)
+                const aspectRatio = img.width / img.height;
+                const maxWidth = 100; // Smaller for header
+                const maxHeight = 50;  // Smaller for header
+                let width = maxWidth;
+                let height = maxHeight;
+
+                if (aspectRatio > 1) {
+                  // Landscape image
+                  height = maxWidth / aspectRatio;
+                } else {
+                  // Portrait image
+                  width = maxHeight * aspectRatio;
+                }
+
+                // Create header paragraph with logo
+                const headerLogoParagraph = new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: uint8Array,
+                      transformation: {
+                        width: Math.round(width),
+                        height: Math.round(height),
+                      }
+                    }),
+                  ],
+                  alignment: AlignmentType.LEFT,
+                });
+                
+                fallbackHeaderChildren.push(headerLogoParagraph);
+                console.log('Logo added to fallback header with dimensions:', width, 'x', height);
+                
+                // Clean up the object URL
+                URL.revokeObjectURL(img.src);
+              } catch (error) {
+                console.error('Could not embed customer logo in fallback header:', error);
+              }
+            }
+            
+            // Add header text if available
+            if (projectInfo.headerText) {
+              const headerTextParagraph = new Paragraph({
+                children: [new TextRun({ text: projectInfo.headerText, size: 18, color: '666666' })],
+                alignment: AlignmentType.RIGHT,
+              });
+              fallbackHeaderChildren.push(headerTextParagraph);
+            }
+            
+            // Create a simple DOCX as fallback with proper heading styles
             const fallbackDoc = new Document({
               sections: [{
                 properties: {},
+                headers: fallbackHeaderChildren.length > 0 ? { default: new Header({ children: fallbackHeaderChildren }) } : undefined,
                 children: [
                   new Paragraph({
-                    children: [new TextRun({ text: selectedDocumentType.toUpperCase().replace('-', ' '), bold: true })]
+                    text: selectedDocumentType.toUpperCase().replace('-', ' '),
+                    heading: HeadingLevel.HEADING_1,
+                    spacing: {
+                      after: 200,
+                      before: 200
+                    }
                   }),
                   new Paragraph({
                     children: [new TextRun({ text: `Customer: ${projectInfo.customerName || 'N/A'}` })]
@@ -801,12 +1241,20 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
                     children: [new TextRun({ text: `Project: ${projectInfo.projectName || 'N/A'}` })]
                   }),
                   new Paragraph({
+                    text: "Project Overview",
+                    heading: HeadingLevel.HEADING_2,
+                    spacing: {
+                      after: 200,
+                      before: 400
+                    }
+                  }),
+                  new Paragraph({
                     children: [new TextRun({ text: projectInfo.projectOverview || 'No project overview provided.' })]
                   })
                 ]
               }]
             });
-            
+
             const fallbackBlob = await Packer.toBlob(fallbackDoc);
             const fallbackUrl = URL.createObjectURL(fallbackBlob);
             const fallbackLink = document.createElement('a');
@@ -816,15 +1264,29 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
             fallbackLink.click();
             document.body.removeChild(fallbackLink);
             URL.revokeObjectURL(fallbackUrl);
-            
+
             alert('DOCX generation failed. A simplified DOCX file has been created instead.');
           }
           break;
 
-                case 'gdocs':
+        case 'gdocs':
           try {
             console.log('Starting Google Docs generation...');
-            
+
+            // Get font family from first selected block for Google Docs table
+            const getTableFontFamily = () => {
+              if (selectedBlocks.length > 0) {
+                const firstBlock = selectedBlocks[0];
+                // Try to get font family from content formatting first, then title formatting
+                return firstBlock.contentFormatting?.fontFamily ||
+                  firstBlock.titleFormatting?.fontFamily ||
+                  'Arial';
+              }
+              return 'Arial';
+            };
+
+            const tableFontFamily = getTableFontFamily();
+
             // Generate HTML optimized for Google Docs import
             const gdocsHtml = `
 <!DOCTYPE html>
@@ -922,55 +1384,13 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
     <p>${projectInfo.projectOverview || 'No project overview provided.'}</p>
   </div>
 
-  <div class="section">
-    <h2>Technical Overview</h2>
-    <p>${projectInfo.technicalOverview || 'No technical overview provided.'}</p>
-  </div>
-
-  ${selectedBlocks.map((block, index) => {
-    const titleStyle = buildInlineStyleFromFormatting(block.titleFormatting);
-    const contentStyle = buildInlineStyleFromFormatting(block.contentFormatting);
-    const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<p class="header-option">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</p>` : '';
-    const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<p class="footer-option">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</p>` : '';
-    const contentHTML = (block.formattedContent && block.formattedContent.length > 0)
-      ? convertFormattedContentToHTML(block.formattedContent)
-      : block.content.replace(/\n/g, '<br>');
-    return `
-    <div class="content-block">
-      <p><span style="${titleStyle}"><strong>${index + 1}. ${block.title}</strong></span></p>
-      ${headerHTML}
-      <p style="${contentStyle}">${contentHTML}</p>
-      ${footerHTML}
-    </div>`;
-  }).join('')}
-
   ${(projectInfo.hardwareComponents.length > 0 || projectInfo.servicesComponents.length > 0 || projectInfo.pricingTable.length > 0) ? `
   <div class="section">
     <h2>Pricing & Components</h2>
-    ${projectInfo.hardwareComponents.length > 0 ? `
-    <div class="content-block">
-      <h3>Hardware Components</h3>
-      <div>
-        ${projectInfo.hardwareComponents.map(item => `
-          <p>• ${convertFormattedContentToHTML([item])}</p>
-        `).join('')}
-      </div>
-    </div>
-    ` : ''}
-    ${projectInfo.servicesComponents.length > 0 ? `
-    <div class="content-block">
-      <h3>Services Components</h3>
-      <div>
-        ${projectInfo.servicesComponents.map(item => `
-          <p>• ${convertFormattedContentToHTML([item])}</p>
-        `).join('')}
-      </div>
-    </div>
-    ` : ''}
     ${projectInfo.pricingTable.length > 0 ? `
     <div class="content-block">
       <h3>Pricing Structure</h3>
-      <table>
+      <table style="font-family: ${tableFontFamily}, sans-serif;">
         <thead>
           <tr>
             <th>Item</th>
@@ -998,8 +1418,52 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
       </table>
     </div>
     ` : ''}
+    ${projectInfo.hardwareComponents.length > 0 ? `
+    <div class="content-block">
+      <h3>Hardware Components</h3>
+      <div>
+        ${projectInfo.hardwareComponents.map(item => `
+          <p>${convertFormattedContentToHTML([item])}</p>
+        `).join('')}
+      </div>
+    </div>
+    ` : ''}
+    ${projectInfo.servicesComponents.length > 0 ? `
+    <div class="content-block">
+      <h3>Services Components</h3>
+      <div>
+        ${projectInfo.servicesComponents.map(item => `
+          <p>${convertFormattedContentToHTML([item])}</p>
+        `).join('')}
+      </div>
+    </div>
+    ` : ''}
   </div>
   ` : ''}
+
+  <div class="section">
+    <h2>Technical Overview</h2>
+    <p>${projectInfo.technicalOverview || 'No technical overview provided.'}</p>
+  </div>
+
+  ${selectedBlocks.map((block, index) => {
+              const titleStyle = buildInlineStyleFromFormatting(block.titleFormatting);
+              const contentStyle = buildInlineStyleFromFormatting(block.contentFormatting);
+              const headerHTML = (block.headerOptions && block.headerOptions.some(opt => opt)) ? `<p class="header-option">Header: ${block.headerOptions.filter(Boolean).join(' | ')}</p>` : '';
+              const footerHTML = (block.footerOptions && block.footerOptions.some(opt => opt)) ? `<p class="footer-option">Footer: ${block.footerOptions.filter(Boolean).join(' | ')}</p>` : '';
+              const contentHTML = (block.formattedContent && block.formattedContent.length > 0)
+                ? convertFormattedContentToHTML(block.formattedContent)
+                : block.content.replace(/\n/g, '<br>');
+              return `
+    <div class="content-block">
+      <p><span style="${titleStyle}"><strong>${block.title}</strong></span></p>
+      ${headerHTML}
+      <p style="${contentStyle}">${contentHTML}</p>
+      ${footerHTML}
+    </div>`;
+            }).join('')}
+
+
 
   <div class="footer">
     <p><em>Generated on ${formatDate(new Date().toISOString().split('T')[0])}</em></p>
@@ -1009,30 +1473,30 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
 
             // Create a .gdoc file (which is actually a text file with a Google Docs URL)
             const gdocContent = `{"url": "https://docs.google.com/document/d/placeholder", "doc_id": "placeholder"}`;
-            
+
             // Save as .gdoc file
             downloadFile(gdocContent, `${baseFilename}.gdoc`, 'application/vnd.google-apps.document');
-            
+
             // Also save the HTML version for easy import
             downloadFile(gdocsHtml, `${baseFilename}_for_import.html`, 'text/html');
-            
+
             // Provide instructions for creating Google Doc
-//             const instructions = `
-// Google Docs file generated successfully!
+            //             const instructions = `
+            // Google Docs file generated successfully!
 
-// To create a Google Doc:
-// 1. Open Google Docs (docs.google.com)
-// 2. Click "File" → "Open"
-// 3. Click "Upload" tab
-// 4. Drag and drop the "${baseFilename}_for_import.html" file
-// 5. Google Docs will convert it to a native Google Doc format
+            // To create a Google Doc:
+            // 1. Open Google Docs (docs.google.com)
+            // 2. Click "File" → "Open"
+            // 3. Click "Upload" tab
+            // 4. Drag and drop the "${baseFilename}_for_import.html" file
+            // 5. Google Docs will convert it to a native Google Doc format
 
-// The .gdoc file is also saved for reference.
-//             `;
-            
+            // The .gdoc file is also saved for reference.
+            //             `;
+
             // alert(instructions);
             console.log('Google Docs files generated successfully');
-            
+
           } catch (error) {
             console.error('Error generating Google Docs file:', error);
             alert('Error generating Google Docs file. Please try again.');
@@ -1064,21 +1528,21 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
           <DocumentTypeSelector
             documentTypes={documentTypes}
             selectedType={selectedDocumentType}
-            onTypeSelect={setSelectedDocumentType}
+            onTypeSelect={updateSelectedDocumentType}
           />
         );
       case 1:
         return (
           <ProjectInfoForm
             projectInfo={projectInfo}
-            onInfoChange={setProjectInfo}
+            onInfoChange={updateProjectInfo}
           />
         );
       case 2:
         return (
           <TextBlockSelector
             textBlocks={textBlocks}
-            onBlocksChange={setTextBlocks}
+            onBlocksChange={updateTextBlocks}
           />
         );
       case 3:
@@ -1120,11 +1584,18 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
                 Step {currentStep + 1} of {wizardSteps.length}
               </div>
               <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-gradient-to-r from-primary-500 to-primary-600 transition-all duration-500 ease-out"
                   style={{ width: `${((currentStep + 1) / wizardSteps.length) * 100}%` }}
                 ></div>
               </div>
+              <button
+                onClick={clearAllSavedData}
+                className="text-sm text-red-600 bg-white/60 px-3 py-2 rounded-full border border-red-200 hover:bg-red-50 hover:border-red-300 transition-all duration-200"
+                title="Clear all saved data and reset to initial state"
+              >
+                Reset All
+              </button>
               {/* <div className="text-sm text-gray-600 bg-white/60 px-4 py-2 rounded-full border border-gray-200">
                 <span className="font-medium">Contact Dmytro:</span> plyskadmytro1@gmail.com
               </div> */}
@@ -1149,11 +1620,10 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
           <button
             onClick={handlePrevious}
             disabled={currentStep === 0}
-            className={`group flex items-center px-6 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${
-              currentStep === 0
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-white text-gray-700 hover:bg-gray-50 shadow-lg hover:shadow-xl border border-gray-200 hover:-translate-y-0.5'
-            }`}
+            className={`group flex items-center px-6 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${currentStep === 0
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-white text-gray-700 hover:bg-gray-50 shadow-lg hover:shadow-xl border border-gray-200 hover:-translate-y-0.5'
+              }`}
           >
             <ChevronLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform duration-300" />
             Previous
@@ -1163,11 +1633,10 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
             {wizardSteps.map((_, index) => (
               <div
                 key={index}
-                className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                  index <= currentStep
-                    ? 'bg-primary-500 shadow-lg'
-                    : 'bg-gray-300'
-                }`}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${index <= currentStep
+                  ? 'bg-primary-500 shadow-lg'
+                  : 'bg-gray-300'
+                  }`}
               />
             ))}
           </div>
@@ -1176,11 +1645,10 @@ Generated on ${formatDate(new Date().toISOString().split('T')[0])}
             <button
               onClick={handleNext}
               disabled={!canProceed()}
-              className={`group flex items-center px-8 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${
-                canProceed()
-                  ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 shadow-lg hover:shadow-xl hover:-translate-y-0.5'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              }`}
+              className={`group flex items-center px-8 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${canProceed()
+                ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 shadow-lg hover:shadow-xl hover:-translate-y-0.5'
+                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                }`}
             >
               Next
               <ChevronRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform duration-300" />
